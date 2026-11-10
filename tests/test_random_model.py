@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from benchmarks import random_model
-from tests.tinyhf import TINY
+from tests.tinyhf import CLIP_LLAMA, TINY, build_tokenizer
 from vlmserve.hf.loader import open_model
 
 
@@ -32,3 +32,10 @@ def test_the_small_preset_is_the_size_of_a_small_real_model() -> None:
 def test_an_unknown_preset_is_refused(tmp_path: Path) -> None:
     with pytest.raises(SystemExit):
         random_model.main([str(tmp_path), "--preset", "huge"])
+
+
+def test_a_padded_vocab_still_decodes_every_id_to_text() -> None:
+    tokenizer = build_tokenizer(CLIP_LLAMA, vocab_size=300)
+    assert len(tokenizer) == 300
+    assert tokenizer.decode([299]) == "t299"
+    assert all(tokenizer.decode([i]) for i in range(260, 300))

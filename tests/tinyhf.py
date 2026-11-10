@@ -124,8 +124,12 @@ def picture(seed: int, size: tuple[int, int] = (40, 30)) -> Image.Image:
     return Image.fromarray(pixels, "RGB")
 
 
-def build_tokenizer(variant: Variant) -> PreTrainedTokenizerFast:
-    """One token per byte plus the specials, which is all a test needs."""
+def build_tokenizer(variant: Variant, vocab_size: int = 0) -> PreTrainedTokenizerFast:
+    """One token per byte plus the specials, which is all a test needs.
+
+    A bigger vocab_size adds plain tokens (t300, t301, ...) so that a model with a
+    real-sized embedding table still only picks ids that decode to text.
+    """
     specials = ["<unk>", "<image>"]
     specials += ["<s>", "</s>"] if variant.llama else ["<|im_start|>", "<|im_end|>"]
     vocab = {
@@ -133,6 +137,8 @@ def build_tokenizer(variant: Variant) -> PreTrainedTokenizerFast:
     }
     for special in specials:
         vocab[special] = len(vocab)
+    while len(vocab) < vocab_size:
+        vocab[f"t{len(vocab)}"] = len(vocab)
     tok = Tokenizer(models.BPE(vocab=vocab, merges=[], unk_token="<unk>"))
     tok.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
     tok.decoder = decoders.ByteLevel()
@@ -180,7 +186,7 @@ def build_tiny_llava(
     """Write a random llava checkpoint of the given size (small enough, by default,
     for a unit test) and keep the transformers model that wrote it."""
     torch.manual_seed(seed)
-    tokenizer = build_tokenizer(variant)
+    tokenizer = build_tokenizer(variant, sizes.vocab_size)
     clip = variant.vision == "clip"
     vision_args = {
         "hidden_size": sizes.vision_hidden,
