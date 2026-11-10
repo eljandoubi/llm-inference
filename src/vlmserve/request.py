@@ -56,6 +56,9 @@ class Request:
     num_preemptions: int = field(init=False, default=0)
     block_ids: list[int] = field(init=False, default_factory=list)
     block_hashes: list[bytes] = field(init=False, default_factory=list)
+    num_committed_blocks: int = field(
+        init=False, default=0
+    )  # already in the prefix cache
     embeddings: dict[str, torch.Tensor] = field(init=False, default_factory=dict)
 
     def __post_init__(self) -> None:

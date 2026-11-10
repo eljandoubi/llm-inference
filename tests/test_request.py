@@ -14,6 +14,8 @@ def test_new_request_waits_with_nothing_computed() -> None:
     assert req.num_computed_tokens == 0
     assert req.num_tokens == req.num_prompt_tokens == 6
     assert req.output_token_ids == []
+    assert req.block_ids == []
+    assert req.num_committed_blocks == 0
     assert not req.is_finished
 
 
