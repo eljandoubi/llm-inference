@@ -159,9 +159,12 @@ async def send(client: httpx2.AsyncClient, spec: Spec) -> Result:
         result.error = f"{type(exc).__name__}: {exc}"
         return result
     result.latency = time.perf_counter() - started
-    result.ok = result.completion_tokens > 0
-    if not result.ok:
+    if result.completion_tokens == 0:
         result.error = "the answer had no tokens"
+    elif result.ttft == 0.0:
+        result.error = "the stream carried no text, only invisible tokens"
+    else:
+        result.ok = True
     return result
 
 

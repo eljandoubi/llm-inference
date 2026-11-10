@@ -154,6 +154,10 @@ async def test_a_streamed_answer_is_read_into_numbers() -> None:
         (httpx2.Response(500, text="boom"), "HTTP 500: boom"),
         (httpx2.Response(200, content=sse(chunk("x"))), "no tokens"),
         (
+            httpx2.Response(200, content=sse(chunk(""), chunk(None), usage(9, 3))),
+            "no text",
+        ),
+        (
             httpx2.Response(200, content=sse({"error": {"message": "engine died"}})),
             "engine died",
         ),
