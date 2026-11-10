@@ -42,3 +42,66 @@ dev = [
     "pytest-timeout>=2.4.0",
     "ruff>=0.17.4",
 ]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # isort
+    "N",        # pep8-naming
+    "UP",       # pyupgrade
+    "B",        # bugbear
+    "C4",       # comprehensions
+    "SIM",
+    "PT",       # pytest style
+    "PERF",
+    "RUF",
+    "S",        # bandit
+    "T20",      # stray prints
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]
+"benchmarks/**" = ["T20", "S311"]
+"src/vlmserve/cli.py" = ["T20"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["vlmserve"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+files = ["src", "tests"]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+disallow_untyped_decorators = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+timeout = 120
+markers = [
+    "slow: long running, or needs real checkpoints",
+    "hub: needs network access to the Hugging Face hub",
+]
+
+[tool.coverage.run]
+source = ["vlmserve"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "\\.\\.\\.",
+]
