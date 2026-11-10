@@ -1,9 +1,13 @@
+import torch
+
 from vlmserve.config import EngineConfig
 from vlmserve.kv.manager import KVCacheManager
-from vlmserve.request import FinishReason, Request, Status
+from vlmserve.multimodal.encoder_cache import EncoderCache
+from vlmserve.request import FinishReason, ImageSegment, Request, Status
 from vlmserve.scheduler import Batch, Scheduler
 
 SAMPLED = 1000
+IMG = 77
 
 
 def make(
@@ -12,6 +16,8 @@ def make(
     max_seqs: int = 4,
     max_tokens: int = 16,
     caching: bool = True,
+    encode_budget: int = 4096,
+    cache: EncoderCache | None = None,
 ) -> Scheduler:
     config = EngineConfig(
         "m",
@@ -21,8 +27,14 @@ def make(
         block_size=block_size,
         num_kv_blocks=num_blocks,
         enable_prefix_caching=caching,
+        max_encoder_tokens_per_step=encode_budget,
     )
-    return Scheduler(config, KVCacheManager(num_blocks, block_size, caching))
+    return Scheduler(config, KVCacheManager(num_blocks, block_size, caching), cache)
+
+
+def with_image(rid: str, before: int, image: int, key: str, after: int = 0) -> Request:
+    tokens = [1] * before + [IMG] * image + [2] * after
+    return Request(rid, tokens, segments=[ImageSegment(before, image, key)])
 
 
 def tick(sched: Scheduler) -> Batch:
@@ -205,3 +217,83 @@ def test_a_request_that_cannot_fit_even_alone_preempts_itself() -> None:
     assert a.status is Status.WAITING
     assert a.num_preemptions == 1
     assert list(sched.waiting) == [a]
+
+
+def keys(batch: Batch) -> list[str]:
+    return [seg.key for seg in batch.to_encode]
+
+
+def test_an_image_in_the_chunk_has_to_be_embedded() -> None:
+    sched = make()
+    sched.add(with_image("a", before=2, image=4, key="cat", after=2))
+    assert keys(sched.schedule()) == ["cat"]
+
+
+def test_an_image_outside_the_chunk_can_wait() -> None:
+    sched = make(max_tokens=4)
+    sched.add(with_image("a", before=6, image=4, key="cat"))
+    assert keys(sched.schedule()) == []  # the first chunk is all text
+
+
+def test_images_that_are_ready_are_not_embedded_again() -> None:
+    cache = EncoderCache(capacity_tokens=100)
+    cache.put("cat", torch.zeros(4, 8))
+    sched = make(cache=cache)
+    sched.add(with_image("a", before=2, image=4, key="cat"))
+    assert keys(sched.schedule()) == []
+
+    own = with_image("b", before=2, image=4, key="dog")
+    own.embeddings["dog"] = torch.zeros(4, 8)
+    sched.add(own)
+    assert keys(sched.schedule()) == []
+
+
+def test_one_image_shared_by_two_requests_is_embedded_once() -> None:
+    sched = make()
+    sched.add(with_image("a", before=0, image=4, key="cat"))
+    sched.add(with_image("b", before=1, image=4, key="cat"))
+    batch = sched.schedule()
+    assert len(batch.items) == 2
+    assert keys(batch) == ["cat"]
+
+
+def test_a_chunk_stops_before_an_image_that_does_not_fit_the_budget() -> None:
+    sched = make(encode_budget=4)
+    sched.add(with_image("a", before=0, image=4, key="x"))
+    sched.add(with_image("b", before=2, image=4, key="y"))
+    batch = tick(sched)
+    assert shape(batch) == [("a", 0, 4, True), ("b", 0, 2, False)]
+    assert keys(batch) == ["x"]
+    batch = tick(sched)  # the budget starts over
+    assert shape(batch) == [("a", 4, 1, True), ("b", 2, 4, True)]
+    assert keys(batch) == ["y"]
+
+
+def test_a_request_whose_first_token_is_an_unaffordable_image_waits() -> None:
+    sched = make(encode_budget=4)
+    sched.add(with_image("a", before=0, image=4, key="x"))
+    b = with_image("b", before=0, image=4, key="y")
+    sched.add(b)
+    batch = tick(sched)
+    assert shape(batch) == [("a", 0, 4, True)]
+    assert b.status is Status.WAITING
+    assert shape(tick(sched)) == [("a", 4, 1, True), ("b", 0, 4, True)]
+
+
+def test_the_first_image_of_a_step_goes_even_if_it_is_over_the_budget() -> None:
+    sched = make(encode_budget=2)
+    sched.add(with_image("a", before=1, image=6, key="big"))
+    batch = sched.schedule()
+    assert keys(batch) == ["big"]
+    assert batch.items[0].num_tokens == 7
+
+
+def test_a_cache_hit_that_ends_inside_an_image_needs_the_whole_image() -> None:
+    sched = make()
+    sched.add(with_image("a", before=2, image=8, key="cat", after=2))
+    tick(sched)
+    b = with_image("b", before=2, image=8, key="cat", after=2)
+    sched.add(b)
+    batch = sched.schedule()
+    assert shape(batch)[-1] == ("b", 8, 4, True)  # blocks 0-1 came from the cache
+    assert [seg.length for seg in batch.to_encode] == [8]
