@@ -50,6 +50,32 @@ def _rope(x: torch.Tensor, theta: float) -> torch.Tensor:
     return torch.cat([first * cos - second * sin, second * cos + first * sin], dim=-1)
 
 
+def dense_greedy(
+    config: DecoderConfig,
+    w: dict[str, torch.Tensor],
+    prompt: list[int],
+    steps: int,
+    image_rows: tuple[int, torch.Tensor] | None = None,
+) -> list[int]:
+    """Greedy continuation by recomputing everything at every step.
+
+    image_rows is (first position, embeddings) of an image inside the prompt.
+    """
+    tokens = list(prompt)
+    out: list[int] = []
+    for _ in range(steps):
+        embeds = w["embed_tokens.weight"][torch.tensor(tokens)].clone()
+        if image_rows is not None:
+            start, rows = image_rows
+            embeds[start : start + len(rows)] = rows
+        logits = dense_logits(config, w, tokens, embeds)[-1]
+        first, second = logits.topk(2).values.tolist()
+        assert first - second > 1e-3, "a near tie could flip, try another seed"
+        out.append(int(logits.argmax()))
+        tokens.append(out[-1])
+    return out
+
+
 def dense_logits(
     config: DecoderConfig,
     w: dict[str, torch.Tensor],

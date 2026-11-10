@@ -42,7 +42,7 @@ def build_decoder(
     device: torch.device,
     dtype: torch.dtype = torch.float32,
 ) -> Decoder:
-    decoder = Decoder(config, 64, device, dtype)
+    decoder = Decoder(config, 256, device, dtype)
     load_decoder_weights(decoder, weights.items())
     return decoder
 
@@ -132,3 +132,15 @@ def image_segment(offset: int, key: str, seed: int = 0) -> ImageSegment:
     return ImageSegment(
         offset, TinyVision.tokens_per_image, key, {"pixel_values": pixels}
     )
+
+
+class CharTokenizer:
+    """Ids 0-2 are special, every other id is a letter."""
+
+    def decode(
+        self, token_ids: Sequence[int], skip_special_tokens: bool = False
+    ) -> str:
+        return "".join(
+            chr(97 + t % 26) if t >= 3 else ("" if skip_special_tokens else f"<{t}>")
+            for t in token_ids
+        )
