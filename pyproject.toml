@@ -1,0 +1,44 @@
+[project]
+name = "vlmserve"
+version = "0.1.0"
+description = "A small vision-language model server with a paged KV cache and continuous batching"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [
+    { name = "eljandoubi_a", email = "abdelkarim.eljandoubi@lcl.fr" }
+]
+keywords = ["vlm", "llm", "inference", "serving", "paged-attention"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.162.4",
+    "huggingface-hub>=2.4.0",
+    "numpy>=2.5.4",
+    "pillow>=13.0.0",
+    "pydantic>=2.14.3",
+    "safetensors>=0.8.0",
+    "torch>=2.15.0",
+    "transformers>=5.22.2",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.16,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "mypy>=2.4.1",
+    "pytest>=9.2.0",
+    "pytest-cov>=7.1.0",
+    "pytest-timeout>=2.4.0",
+    "ruff>=0.17.4",
+]
