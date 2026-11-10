@@ -3,12 +3,15 @@ embedding space of the text model."""
 
 import logging
 from collections.abc import Iterable, Mapping, Sequence
+from typing import Any
 
 import torch
+from PIL import Image
 from torch import nn
 from transformers import AutoModel, LlavaConfig
 from transformers.models.llava.modeling_llava import LlavaMultiModalProjector
 
+from vlmserve.hf.frontend import ImageSupport
 from vlmserve.model.checkpoint import Checkpoint
 
 log = logging.getLogger(__name__)
@@ -25,6 +28,29 @@ def tokens_per_image(config: LlavaConfig) -> int:
     has_cls = vision.model_type == "clip_vision_model"
     dropped = config.vision_feature_select_strategy == "default"
     return side * side + int(has_cls) - int(dropped)
+
+
+def llava_images(processor: Any, config: LlavaConfig) -> ImageSupport:
+    """Image handling for the frontend, from a llava processor and the model config."""
+    token = processor.image_token
+    token_id = processor.tokenizer.convert_tokens_to_ids(token)
+    if token_id != config.image_token_index:
+        raise ValueError(
+            f"the tokenizer has {token!r} as id {token_id} but the model config "
+            f"says images are id {config.image_token_index}"
+        )
+    size = config.vision_config.image_size
+    probe = processor.image_processor(
+        images=[Image.new("RGB", (9, 7))], return_tensors="pt"
+    )
+    if tuple(probe["pixel_values"].shape[-2:]) != (size, size):
+        raise ValueError(
+            f"the image processor makes {tuple(probe['pixel_values'].shape[-2:])} "
+            f"pixels but the vision tower takes {size}x{size}"
+        )
+    return ImageSupport(
+        processor.image_processor, token, token_id, tokens_per_image(config), size
+    )
 
 
 class LlavaVision:

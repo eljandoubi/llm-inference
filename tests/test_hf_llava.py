@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import torch
 from safetensors import safe_open
-from transformers import AutoConfig, LlavaConfig
+from transformers import AutoConfig, AutoProcessor, LlavaConfig
 
 from tests.tinyhf import (
     LAYOUTS,
@@ -14,7 +14,12 @@ from tests.tinyhf import (
     picture,
     rewrite_weights,
 )
-from vlmserve.hf.llava import LlavaVision, load_llava_vision, tokens_per_image
+from vlmserve.hf.llava import (
+    LlavaVision,
+    llava_images,
+    load_llava_vision,
+    tokens_per_image,
+)
 from vlmserve.model.checkpoint import Checkpoint
 
 
@@ -55,6 +60,36 @@ def encoder(
 
 def test_it_counts_the_placeholders_one_image_takes(tiny_llava: TinyLlava) -> None:
     assert tokens_per_image(llava_config(tiny_llava.path)) == TOKENS_PER_IMAGE
+
+
+def test_the_image_support_matches_the_model(tiny_llava: TinyLlava) -> None:
+    config = llava_config(tiny_llava.path)
+    processor = AutoProcessor.from_pretrained(tiny_llava.path)
+    support = llava_images(processor, config)
+    assert support.token == "<image>"
+    assert support.token_id == config.image_token_index
+    assert support.tokens_per_image == TOKENS_PER_IMAGE
+    assert support.size == 28
+
+
+def test_a_tokenizer_that_disagrees_with_the_config_is_an_error(
+    tiny_llava: TinyLlava,
+) -> None:
+    config = copy.deepcopy(llava_config(tiny_llava.path))
+    config.image_token_index = 5
+    processor = AutoProcessor.from_pretrained(tiny_llava.path)
+    with pytest.raises(ValueError, match="images are id 5"):
+        llava_images(processor, config)
+
+
+def test_an_image_processor_that_disagrees_with_the_tower_is_an_error(
+    tiny_llava: TinyLlava,
+) -> None:
+    config = copy.deepcopy(llava_config(tiny_llava.path))
+    config.vision_config.image_size = 56
+    processor = AutoProcessor.from_pretrained(tiny_llava.path)
+    with pytest.raises(ValueError, match="vision tower takes 56x56"):
+        llava_images(processor, config)
 
 
 @pytest.mark.parametrize(
