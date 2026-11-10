@@ -11,7 +11,8 @@ import uvicorn
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from tests.tinyhf import SINGLE, TinyLlava, TinyText, hf_continuation, picture
+from randomhf.checkpoints import TinyLlava, TinyText
+from tests.tinyhf import SINGLE, hf_continuation, picture
 from vlmserve import __version__, cli
 from vlmserve.config import EngineConfig
 

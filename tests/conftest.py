@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 import torch
 
-from tests.tinyhf import (
+from randomhf.checkpoints import (
     VARIANTS,
     TinyLlava,
     TinyText,

@@ -1,10 +1,10 @@
-"""Write a random llava-style checkpoint of a chosen size, to benchmark with.
+"""Write a random llava-style checkpoint of a chosen size.
 
 The weights are noise, so the answers are noise. But the matrix shapes, the KV cache
 per token and the number of image tokens are those of a real model of that size, so
-the speed of the server is what it would be for one. Run it from the repository root:
+the speed of the server is what it would be for one. From the repository root:
 
-    python -m benchmarks.random_model /tmp/small-vlm --preset small
+    python -m randomhf /tmp/small-vlm --preset small
 """
 
 import argparse
@@ -13,30 +13,10 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import torch
-from tests.tinyhf import CLIP_LLAMA, TINY, Sizes, build_tiny_llava
+from safetensors.torch import load_file
 
+from randomhf.checkpoints import CLIP_LLAMA, PRESETS, build_tiny_llava
 from vlmserve.device import DTYPES
-
-PRESETS = {
-    "tiny": TINY,
-    # about SmolVLM-256M: a 135M llama (SmolLM2) and a ViT-B tower, 196 tokens an image
-    "small": Sizes(
-        hidden=576,
-        intermediate=1536,
-        layers=30,
-        heads=9,
-        kv_heads=3,
-        max_positions=2048,
-        vocab_size=49152,
-        init_range=0.02,
-        vision_hidden=768,
-        vision_intermediate=3072,
-        vision_layers=12,
-        vision_heads=12,
-        image_size=224,
-        patch=16,
-    ),
-}
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -56,8 +36,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _weights(path: Path) -> list[torch.Tensor]:
-    from safetensors.torch import load_file
-
     return list(load_file(path / "model.safetensors").values())
 
 

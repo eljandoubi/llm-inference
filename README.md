@@ -89,7 +89,7 @@ To try the whole stack without downloading anything, write a random model (the a
 are noise, the plumbing is the real thing):
 
 ```sh
-uv run python -m benchmarks.random_model /tmp/tiny --preset tiny
+uv run python -m randomhf /tmp/tiny --preset tiny
 uv run vlmserve generate --model /tmp/tiny --prompt "hello" --max-tokens 16
 ```
 
@@ -233,7 +233,7 @@ folder or a populated cache.
 These numbers are about the *serving stack*: batching, the prefix cache and the vision
 cache. The model is a random llava-style checkpoint with real shapes (249M parameters: a
 30-layer Llama and a ViT-B tower, 196 image tokens per image), made by
-`benchmarks/random_model.py`, on an Apple M4 (16 GB) with MPS in float16. One run per
+`python -m randomhf`, on an Apple M4 (16 GB) with MPS in float16. One run per
 scenario, no other heavy work on the machine. Read them as ratios between
 configurations, not as absolute speed, and not as a statement about any real model. The
 raw outputs are in [`benchmarks/results`](benchmarks/results/apple-m4-mps.txt);
@@ -292,7 +292,7 @@ package.
 
 The tests never touch the network. Numerics are checked against two references: a dense
 (unpaged) implementation in `tests/dense.py`, and `transformers` itself on tiny random
-checkpoints that `tests/tinyhf.py` writes to disk in the real file layouts (several
+checkpoints that `randomhf` writes to disk in the real file layouts (several
 variants: classic and nested llava layouts, tied and untied embeddings, CLIP and SigLIP).
 The model tests run on every device the machine has: CPU everywhere, plus MPS on a Mac.
 

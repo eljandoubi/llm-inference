@@ -4,9 +4,9 @@
 #
 #   benchmarks/suite.sh [model-dir] [out-file]
 #
-# The model is a random llava-style checkpoint (see benchmarks/random_model.py), it is
-# created if the directory does not exist. PRESET=tiny only checks that the script
-# runs: its 128-token window refuses the prompts.
+# The model is a random llava-style checkpoint (see randomhf/), it is created if the
+# directory does not exist. PRESET=tiny only checks that the script runs: its
+# 128-token window refuses the prompts.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -17,7 +17,7 @@ PORT_ON=${PORT_ON:-8200}
 PORT_OFF=${PORT_OFF:-8201}
 
 if [ ! -d "$MODEL" ]; then
-    uv run python -m benchmarks.random_model "$MODEL" --preset "$PRESET"
+    uv run python -m randomhf "$MODEL" --preset "$PRESET"
 fi
 mkdir -p "$(dirname "$OUT")"
 

@@ -1,7 +1,7 @@
 machine:  Apple M4, 16 GiB unified memory, macOS 26.7.1
 device:   mps, float16 (what `--device auto --dtype auto` picks here)
 torch:    2.15.0, transformers 5.22.2, python 3.12.13
-model:    random llava-style checkpoint, 249M parameters (python -m benchmarks.random_model --preset small):
+model:    random llava-style checkpoint, 249M parameters (python -m randomhf --preset small):
           30-layer llama (hidden 576, 9 heads, 3 kv heads), ViT-B tower at 224 px = 196 image tokens
 server:   vlmserve serve --max-num-seqs 16 (second server with --no-prefix-caching)
 date:     2026-11-10, one run per scenario, no other heavy work was running

@@ -7,13 +7,8 @@ import torch
 from safetensors import safe_open
 from transformers import AutoConfig, AutoProcessor, LlavaConfig
 
-from tests.tinyhf import (
-    LAYOUTS,
-    TOKENS_PER_IMAGE,
-    TinyLlava,
-    picture,
-    rewrite_weights,
-)
+from randomhf.checkpoints import TinyLlava
+from tests.tinyhf import LAYOUTS, TOKENS_PER_IMAGE, picture, rewrite_weights
 from vlmserve.hf.llava import (
     LlavaVision,
     llava_images,

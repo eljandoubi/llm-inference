@@ -6,15 +6,8 @@ from typing import Any
 import pytest
 import torch
 
-from tests.tinyhf import (
-    MULTI,
-    SINGLE,
-    TEXT_ONLY,
-    TinyLlava,
-    TinyText,
-    hf_continuation,
-    image,
-)
+from randomhf.checkpoints import TinyLlava, TinyText
+from tests.tinyhf import MULTI, SINGLE, TEXT_ONLY, hf_continuation, image
 from vlmserve.config import EngineConfig
 from vlmserve.device import resolve_dtype
 from vlmserve.engine import Engine

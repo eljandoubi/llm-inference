@@ -76,17 +76,18 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S106", "S311"]
 "benchmarks/**" = ["T20", "S311"]
+"randomhf/**" = ["T20", "S106"]  # S106 reads unk_token as a password
 "src/vlmserve/cli.py" = ["T20"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["vlmserve", "benchmarks"]
+known-first-party = ["vlmserve", "benchmarks", "randomhf"]
 
 [tool.mypy]
 python_version = "3.12"
 strict = true
 warn_return_any = false  # calling an nn.Module is typed as Any
 plugins = ["pydantic.mypy"]
-files = ["src", "tests", "benchmarks"]
+files = ["src", "tests", "benchmarks", "randomhf"]
 
 [[tool.mypy.overrides]]
 module = "tests.*"

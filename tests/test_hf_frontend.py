@@ -5,16 +5,8 @@ from typing import Any
 import pytest
 from transformers import AutoConfig, AutoProcessor, AutoTokenizer
 
-from tests.tinyhf import (
-    MULTI,
-    PLAIN_TEMPLATE,
-    SINGLE,
-    TEXT_ONLY,
-    TOKENS_PER_IMAGE,
-    TinyLlava,
-    image,
-    reference,
-)
+from randomhf.checkpoints import PLAIN_TEMPLATE, TinyLlava
+from tests.tinyhf import MULTI, SINGLE, TEXT_ONLY, TOKENS_PER_IMAGE, image, reference
 from vlmserve.frontend import PromptInputs, TextPart, Turn
 from vlmserve.hf.frontend import HFFrontend, ImageSupport
 from vlmserve.hf.llava import llava_images
