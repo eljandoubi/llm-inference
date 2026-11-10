@@ -67,6 +67,8 @@ class AsyncEngine:
         return self._started and self._thread.is_alive() and self._failure is None
 
     def start(self) -> None:
+        if self._started:
+            return
         self._started = True
         self._thread.start()
 
