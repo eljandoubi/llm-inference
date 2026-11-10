@@ -1,7 +1,7 @@
 import asyncio
 import time
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 
@@ -53,6 +53,36 @@ async def drain(
     if last is None:
         raise EngineDeadError("the engine ended the request without an answer")
     return "".join(pieces), last
+
+
+async def drain_unless_disconnected(
+    stream: AsyncGenerator[RequestOutput, None],
+    is_disconnected: Callable[[], Awaitable[bool]],
+    poll: float = 0.25,
+) -> tuple[str, RequestOutput] | None:
+    """drain(), but give up and abort the request if the client goes away first.
+
+    Without this a dropped connection would keep its request running to the end.
+    """
+
+    async def wait_for_disconnect() -> None:
+        while not await is_disconnected():
+            await asyncio.sleep(poll)
+
+    reading = asyncio.ensure_future(drain(stream))
+    watching = asyncio.ensure_future(wait_for_disconnect())
+    try:
+        await asyncio.wait({reading, watching}, return_when=asyncio.FIRST_COMPLETED)
+    except BaseException:  # we were cancelled ourselves, take the read down with us
+        reading.cancel()
+        raise
+    finally:
+        watching.cancel()
+    if reading.done():
+        return reading.result()
+    reading.cancel()  # cancelling the read is what aborts the request
+    await asyncio.gather(reading, return_exceptions=True)
+    return None
 
 
 async def server_sent_events(
@@ -137,7 +167,7 @@ def create_app(
 
     @app.post("/v1/chat/completions", response_model=None)
     async def chat_completions(
-        body: ChatCompletionRequest,
+        body: ChatCompletionRequest, http: Request
     ) -> ChatCompletion | StreamingResponse | JSONResponse:
         if not engine.healthy:
             raise EngineDeadError("the engine is not running")
@@ -172,7 +202,12 @@ def create_app(
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
-        text, last = await drain(stream)
+        answer = await drain_unless_disconnected(stream, http.is_disconnected)
+        if answer is None:  # nobody is listening any more, the request is aborted
+            return error_response(
+                499, "the client closed the request", code="client_closed_request"
+            )
+        text, last = answer
         return ChatCompletion(
             id=request_id,
             created=created,
