@@ -132,11 +132,6 @@ def synchronize(device: torch.device) -> None:
             torch.mps.synchronize()
 
 
-def uses_pinned_staging(device: torch.device) -> bool:
-    """Only CUDA gets anything out of pinned host buffers."""
-    return device.type == "cuda"
-
-
 def describe(device: torch.device) -> str:
     match device.type:
         case "cuda":

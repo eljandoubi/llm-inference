@@ -125,12 +125,6 @@ def test_describe_starts_with_the_device(device: torch.device) -> None:
     assert "GiB" in text
 
 
-def test_only_cuda_stages_through_pinned_memory() -> None:
-    assert dev.uses_pinned_staging(torch.device("cuda", 0))
-    assert not dev.uses_pinned_staging(torch.device("cpu"))
-    assert not dev.uses_pinned_staging(torch.device("mps"))
-
-
 @pytest.mark.parametrize(
     ("cuda", "hip", "nvidia_smi", "warns"),
     [
