@@ -8,9 +8,15 @@ came from, and speaks the OpenAI chat API. It is plain PyTorch: the same code ru
 CPU, Apple silicon (MPS), CUDA and Intel XPU, with nothing to compile.
 
 The engine design follows [PagedAttention](https://arxiv.org/abs/2309.06180) and vLLM,
-and the compact walkthrough in [tinyserve](https://github.com/priyammaz/tinyserve).
-Everything here is written for this repo and kept small on purpose: about 3,700 lines
-of source, strict typing, 665 tests at 98% coverage.
+as laid out in the compact [tinyserve](https://github.com/priyammaz/tinyserve): the
+scheduling loop and the block-hash prefix cache here are written again from those
+ideas, not copied from its code. What is new is the VLM side (images in the block
+hashes, the vision cache, the Hugging Face loaders) and plain PyTorch that runs on
+any device. About 3,700 lines of source, strict typing, 665 tests at 98% coverage.
+
+Status: 0.1. It runs end to end on CPU and Apple silicon and matches `transformers`
+token for token on tiny random checkpoints. It has not been run on real weights or on
+a CUDA GPU.
 
 - **Continuous batching with chunked prefill.** One token budget per step is shared by
   decodes and prefill chunks, so a long prompt never stalls the requests that are
@@ -324,8 +330,11 @@ model's space), a `Frontend` (chat template, tokenizer, image placeholders) and 
 ## Credits
 
 [PagedAttention](https://arxiv.org/abs/2309.06180) (Kwon et al.) and the vLLM project for
-the design, [tinyserve](https://github.com/priyammaz/tinyserve) for the idea of a small
-readable version, Hugging Face `transformers` for the model definitions this is checked
+the design. [tinyserve](https://github.com/priyammaz/tinyserve) for showing how small a
+readable version can be: the scheduler's step loop (running requests first, evict the
+newest when blocks run out, admit nothing new in a step that evicted) and the shape of
+the prefix cache follow its structure, written again here with different data
+structures. Hugging Face `transformers` for the model definitions this is checked
 against.
 
 ## License
