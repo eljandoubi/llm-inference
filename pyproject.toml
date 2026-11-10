@@ -90,6 +90,11 @@ module = "tests.*"
 disallow_untyped_defs = false
 disallow_untyped_decorators = false
 
+[[tool.mypy.overrides]]
+# transformers is too loosely typed for --strict, what we take from it is Any
+module = ["transformers", "transformers.*", "tokenizers", "tokenizers.*"]
+follow_imports = "skip"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers --strict-config"
