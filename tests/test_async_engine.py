@@ -1,10 +1,9 @@
 import asyncio
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
 
 import pytest
 import torch
 
+from tests.asyncutil import running, until
 from tests.rig import Rig
 from vlmserve.async_engine import AsyncEngine, EngineDeadError
 from vlmserve.engine import RequestOutput
@@ -15,16 +14,6 @@ GREEDY = SamplingParams(temperature=0, max_tokens=8)
 PROMPT = [5, 6, 7, 8, 9, 10]
 
 
-@contextmanager
-def running(rig: Rig) -> Iterator[AsyncEngine]:
-    engine = AsyncEngine(rig.engine)
-    engine.start()
-    try:
-        yield engine
-    finally:
-        engine.stop()
-
-
 async def collect(
     engine: AsyncEngine,
     request_id: str,
@@ -32,13 +21,6 @@ async def collect(
     params: SamplingParams = GREEDY,
 ) -> list[RequestOutput]:
     return [o async for o in engine.generate(request_id, prompt, params)]
-
-
-async def until(condition: Callable[[], bool], seconds: float = 5.0) -> None:
-    deadline = asyncio.get_running_loop().time() + seconds
-    while not condition():
-        assert asyncio.get_running_loop().time() < deadline, "timed out"
-        await asyncio.sleep(0.005)
 
 
 def test_a_stream_gives_the_same_text_as_stepping_by_hand(device: torch.device) -> None:
