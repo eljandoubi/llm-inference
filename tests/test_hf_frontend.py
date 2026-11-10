@@ -6,16 +6,11 @@ from typing import Any
 import pytest
 from transformers import AutoConfig, AutoProcessor, AutoTokenizer
 
-from tests.tinyhf import TOKENS_PER_IMAGE, TinyLlava, picture
+from tests.tinyhf import PLAIN_TEMPLATE, TOKENS_PER_IMAGE, TinyLlava, picture
 from vlmserve.frontend import ImagePart, PromptInputs, TextPart, Turn
 from vlmserve.hf.frontend import HFFrontend, ImageSupport
 from vlmserve.hf.llava import llava_images
 from vlmserve.multimodal.images import ImageError
-
-PLAIN_TEMPLATE = (
-    "{% for m in messages %}{{ m['role'] + ': ' + m['content'] + '\n' }}{% endfor %}"
-    "{% if add_generation_prompt %}{{ 'assistant: ' }}{% endif %}"
-)
 
 
 def image(seed: int) -> ImagePart:

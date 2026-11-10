@@ -10,6 +10,7 @@ import shutil
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
@@ -21,11 +22,13 @@ from transformers import (
     CLIPVisionConfig,
     GenerationConfig,
     LlamaConfig,
+    LlamaForCausalLM,
     LlavaConfig,
     LlavaForConditionalGeneration,
     LlavaProcessor,
     PreTrainedTokenizerFast,
     Qwen2Config,
+    Qwen2ForCausalLM,
     SiglipImageProcessorPil,
     SiglipVisionConfig,
 )
@@ -35,6 +38,11 @@ PATCH = 14
 TOKENS_PER_IMAGE = (
     IMAGE_SIZE // PATCH
 ) ** 2  # clip drops its CLS token, siglip has none
+
+PLAIN_TEMPLATE = (
+    "{% for m in messages %}{{ m['role'] + ': ' + m['content'] + '\n' }}{% endfor %}"
+    "{% if add_generation_prompt %}{{ 'assistant: ' }}{% endif %}"
+)
 
 LLAMA_TEMPLATE = (
     "{% for m in messages %}"
@@ -116,6 +124,25 @@ def build_tokenizer(variant: Variant) -> PreTrainedTokenizerFast:
     )
 
 
+def text_config(variant: Variant, tokenizer: PreTrainedTokenizerFast) -> Any:
+    """The text model of a variant: llama with its own head, qwen2 with a tied one."""
+    args = {
+        "vocab_size": len(tokenizer),
+        "hidden_size": 32,
+        "intermediate_size": 64,
+        "num_hidden_layers": 2,
+        "num_attention_heads": 4,
+        "num_key_value_heads": 2,
+        "max_position_embeddings": 128,
+        "initializer_range": 0.3,  # wide logits, so greedy decoding has no near ties
+        "eos_token_id": tokenizer.eos_token_id,
+        "bos_token_id": tokenizer.bos_token_id,
+    }
+    if variant.llama:
+        return LlamaConfig(**args)
+    return Qwen2Config(**args, tie_word_embeddings=True)
+
+
 def build_tiny_llava(path: Path, variant: Variant, seed: int = 0) -> TinyLlava:
     torch.manual_seed(seed)
     tokenizer = build_tokenizer(variant)
@@ -133,21 +160,7 @@ def build_tiny_llava(path: Path, variant: Variant, seed: int = 0) -> TinyLlava:
         if clip
         else SiglipVisionConfig(vision_use_head=False, **vision_args)
     )
-    text_args = {
-        "vocab_size": len(tokenizer),
-        "hidden_size": 32,
-        "intermediate_size": 64,
-        "num_hidden_layers": 2,
-        "num_attention_heads": 4,
-        "num_key_value_heads": 2,
-        "max_position_embeddings": 128,
-        "initializer_range": 0.3,  # wide logits, so greedy decoding has no near ties
-    }
-    text = (
-        LlamaConfig(**text_args, bos_token_id=tokenizer.bos_token_id)
-        if variant.llama
-        else Qwen2Config(**text_args, tie_word_embeddings=True)
-    )
+    text = text_config(variant, tokenizer)
     config = LlavaConfig(
         vision_config=vision,
         text_config=text,
@@ -182,6 +195,29 @@ def build_tiny_llava(path: Path, variant: Variant, seed: int = 0) -> TinyLlava:
     )
     processor.save_pretrained(path)
     return TinyLlava(variant, path, model, processor)
+
+
+@dataclass(frozen=True, slots=True)
+class TinyText:
+    variant: Variant
+    path: Path
+    model: Any  # transformers' own LlamaForCausalLM or Qwen2ForCausalLM
+    tokenizer: PreTrainedTokenizerFast
+
+
+def build_tiny_text(path: Path, variant: Variant, seed: int = 0) -> TinyText:
+    """A plain text model, the way llama and qwen2 checkpoints are laid out."""
+    torch.manual_seed(seed)
+    tokenizer = build_tokenizer(variant)
+    tokenizer.chat_template = PLAIN_TEMPLATE
+    config = text_config(variant, tokenizer)
+    model = (LlamaForCausalLM if variant.llama else Qwen2ForCausalLM)(config).eval()
+    model.generation_config = GenerationConfig(
+        eos_token_id=[tokenizer.eos_token_id], pad_token_id=tokenizer.unk_token_id
+    )
+    model.save_pretrained(path)
+    tokenizer.save_pretrained(path)
+    return TinyText(variant, path, model, tokenizer)
 
 
 def rewrite_weights(
