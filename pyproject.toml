@@ -81,6 +81,7 @@ known-first-party = ["vlmserve"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
+warn_return_any = false  # calling an nn.Module is typed as Any
 plugins = ["pydantic.mypy"]
 files = ["src", "tests"]
 
