@@ -155,6 +155,7 @@ class Scheduler:
             req = item.request
             req.num_computed_tokens = item.start + item.num_tokens
             self.kv.commit(req)
+            self._drop_used_embeddings(req)
 
     def finish(self, req: Request, reason: FinishReason) -> None:
         if req in self.running:
@@ -170,6 +171,14 @@ class Scheduler:
                 self.finish(req, FinishReason.ABORT)
                 return req
         return None
+
+    @staticmethod
+    def _drop_used_embeddings(req: Request) -> None:
+        """Embeddings are dead weight once the whole image has been computed."""
+        done = req.num_computed_tokens
+        for key in {s.key for s in req.segments if s.end <= done}:
+            if all(s.end <= done for s in req.segments if s.key == key):
+                req.embeddings.pop(key, None)
 
     def _preempt(self, victim: Request) -> None:
         self.kv.free(victim)

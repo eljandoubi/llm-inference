@@ -297,3 +297,30 @@ def test_a_cache_hit_that_ends_inside_an_image_needs_the_whole_image() -> None:
     batch = sched.schedule()
     assert shape(batch)[-1] == ("b", 8, 4, True)  # blocks 0-1 came from the cache
     assert [seg.length for seg in batch.to_encode] == [8]
+
+
+def test_embeddings_are_dropped_once_the_image_is_behind_the_request() -> None:
+    sched = make(max_tokens=4)
+    req = with_image("a", before=2, image=4, key="cat", after=2)
+    sched.add(req)
+    req.embeddings["cat"] = torch.zeros(4, 8)
+    tick(sched)  # tokens 0-3: the image is only half done
+    assert "cat" in req.embeddings
+    tick(sched)  # tokens 4-7: now it is behind us
+    assert req.embeddings == {}
+
+
+def test_an_image_used_twice_stays_until_its_last_use() -> None:
+    sched = make(max_tokens=8)
+    tokens = [1] * 2 + [IMG] * 4 + [2] * 2 + [IMG] * 4
+    req = Request(
+        "a",
+        tokens,
+        segments=[ImageSegment(2, 4, "cat"), ImageSegment(8, 4, "cat")],
+    )
+    sched.add(req)
+    req.embeddings["cat"] = torch.zeros(4, 8)
+    tick(sched)  # tokens 0-7, the second copy is still ahead
+    assert "cat" in req.embeddings
+    tick(sched)
+    assert req.embeddings == {}
