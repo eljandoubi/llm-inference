@@ -24,6 +24,15 @@ def find_text_prefix(names: Iterable[str]) -> str:
     return prefixes.pop()
 
 
+def _inside(name: str, part: str) -> str | None:
+    """The rest of a tensor name after the part it lives in, None if it isn't in it."""
+    marker = f"{part}."
+    if name.startswith(marker):
+        return name[len(marker) :]
+    _, found, rest = name.partition(f".{marker}")
+    return rest if found else None
+
+
 class Checkpoint:
     """The safetensors files of a model directory, read lazily tensor by tensor."""
 
@@ -59,6 +68,19 @@ class Checkpoint:
         if len(heads) > 1:
             raise ValueError(f"more than one lm_head in the checkpoint: {heads}")
         renamed.update(dict.fromkeys(heads, _HEAD))
+        for name, tensor in self.items(renamed):
+            yield renamed[name], tensor
+
+    def submodule(self, part: str) -> Iterator[tuple[str, torch.Tensor]]:
+        """Tensors of one named part, e.g. "vision_tower", named relative to it.
+
+        Where a part sits differs between checkpoints ("vision_tower." in older
+        llava files, "model.vision_tower." in newer ones), so the name may come
+        first or after any dotted prefix.
+        """
+        renamed = {
+            n: rest for n in self._file_of if (rest := _inside(n, part)) is not None
+        }
         for name, tensor in self.items(renamed):
             yield renamed[name], tensor
 

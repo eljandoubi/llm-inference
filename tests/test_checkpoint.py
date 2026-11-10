@@ -96,6 +96,33 @@ def test_items_give_back_any_named_tensor(tmp_path: Path) -> None:
     assert got["b"].shape == (3,)
 
 
+@pytest.mark.parametrize("prefix", ["", "model.", "a.b."])
+def test_a_submodule_is_found_wherever_it_sits(tmp_path: Path, prefix: str) -> None:
+    save(
+        tmp_path / "model.safetensors",
+        {
+            f"{prefix}vision_tower.layers.0.weight": torch.ones(2),
+            f"{prefix}vision_tower.norm.bias": torch.zeros(3),
+            f"{prefix}multi_modal_projector.linear_1.weight": torch.ones(4),
+            "language_model.layers.0.weight": torch.ones(5),
+        },
+    )
+    got = dict(Checkpoint(tmp_path).submodule("vision_tower"))
+    assert sorted(got) == ["layers.0.weight", "norm.bias"]
+    assert got["norm.bias"].shape == (3,)
+
+
+def test_a_submodule_name_has_to_match_a_whole_word(tmp_path: Path) -> None:
+    save(
+        tmp_path / "model.safetensors",
+        {
+            "my_vision_tower.weight": torch.ones(1),
+            "vision_tower_extra.weight": torch.ones(1),
+        },
+    )
+    assert dict(Checkpoint(tmp_path).submodule("vision_tower")) == {}
+
+
 def test_two_embedding_tables_are_ambiguous() -> None:
     with pytest.raises(ValueError, match="can't tell"):
         find_text_prefix(["a.embed_tokens.weight", "b.embed_tokens.weight"])
