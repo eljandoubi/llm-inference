@@ -1,14 +1,23 @@
-from collections.abc import Iterator
+from typing import NamedTuple
 
 from vlmserve.async_engine import AsyncEngine
 
 CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
 
 
-def _lines(name: str, kind: str, help_text: str, value: float) -> Iterator[str]:
-    yield f"# HELP vlmserve_{name} {help_text}"
-    yield f"# TYPE vlmserve_{name} {kind}"
-    yield f"vlmserve_{name} {value}"
+class Sample(NamedTuple):
+    name: str
+    kind: str
+    help: str
+    value: float
+
+
+def gauge(name: str, help_text: str, value: float) -> Sample:
+    return Sample(name, "gauge", help_text, value)
+
+
+def counter(name: str, help_text: str, value: float) -> Sample:
+    return Sample(name, "counter", help_text, value)
 
 
 def render(engine: AsyncEngine) -> str:
@@ -18,73 +27,54 @@ def render(engine: AsyncEngine) -> str:
     that may be a step apart from one another. That is fine for a scrape.
     """
     inner = engine.engine
-    stats = inner.stats
-    scheduler = inner.scheduler
-    samples: list[tuple[str, str, str, float]] = [
-        (
-            "engine_healthy",
-            "gauge",
-            "1 while the engine thread runs.",
-            int(engine.healthy),
-        ),
-        (
-            "requests_running",
-            "gauge",
-            "Requests in the running batch.",
-            len(scheduler.running),
-        ),
-        (
-            "requests_waiting",
-            "gauge",
-            "Requests queued for a slot.",
-            len(scheduler.waiting),
-        ),
-        ("kv_cache_usage_ratio", "gauge", "Share of KV blocks in use.", inner.kv.usage),
-        (
+    stats, queue = inner.stats, inner.scheduler
+    samples = [
+        gauge("engine_healthy", "1 while the engine thread runs.", int(engine.healthy)),
+        gauge("requests_running", "Requests in the running batch.", len(queue.running)),
+        gauge("requests_waiting", "Requests queued for a slot.", len(queue.waiting)),
+        gauge("kv_cache_usage_ratio", "Share of KV blocks in use.", inner.kv.usage),
+        counter(
             "requests_finished_total",
-            "counter",
-            "Requests that ran to their end.",
+            "Requests run to the end.",
             stats.finished_requests,
         ),
-        (
+        counter(
             "prompt_tokens_total",
-            "counter",
             "Prompt tokens of finished requests.",
             stats.prompt_tokens,
         ),
-        (
+        counter(
             "prefix_cache_hit_tokens_total",
-            "counter",
             "Prompt tokens of finished requests that came from the prefix cache.",
             stats.cached_prompt_tokens,
         ),
-        (
-            "generation_tokens_total",
-            "counter",
-            "Tokens sampled so far.",
-            stats.generated_tokens,
+        counter(
+            "generation_tokens_total", "Tokens sampled so far.", stats.generated_tokens
         ),
     ]
-    cache = inner.encoder_cache
-    if cache is not None:
+    if (cache := inner.encoder_cache) is not None:
         samples += [
-            (
+            counter(
                 "image_tokens_encoded_total",
-                "counter",
                 "Image tokens that went through the vision tower.",
                 inner.runner.images_encoded,
             ),
-            (
+            counter(
                 "encoder_cache_hits_total",
-                "counter",
                 "Image embeddings reused from the encoder cache.",
                 cache.hits,
             ),
-            (
+            gauge(
                 "encoder_cache_tokens",
-                "gauge",
-                "Image tokens held in the encoder cache.",
+                "Image tokens in the encoder cache.",
                 cache.num_tokens,
             ),
         ]
-    return "\n".join(line for sample in samples for line in _lines(*sample)) + "\n"
+    lines = []
+    for sample in samples:
+        lines += [
+            f"# HELP vlmserve_{sample.name} {sample.help}",
+            f"# TYPE vlmserve_{sample.name} {sample.kind}",
+            f"vlmserve_{sample.name} {sample.value}",
+        ]
+    return "\n".join(lines) + "\n"
