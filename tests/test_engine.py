@@ -1,71 +1,14 @@
-from collections import defaultdict
-from collections.abc import Collection
-
 import pytest
 import torch
 
-from tests.dense import dense_greedy, random_weights
-from tests.models import (
-    CharTokenizer,
-    TinyVision,
-    build_decoder,
-    image_segment,
-    tiny_config,
-)
-from vlmserve.config import EngineConfig
-from vlmserve.engine import Engine, RequestOutput
+from tests.dense import dense_greedy
+from tests.models import TinyVision, image_segment
+from tests.rig import Rig, joined
 from vlmserve.request import FinishReason, ImageSegment
 from vlmserve.sampling import SamplingParams
 
 IMG = 49
 GREEDY = SamplingParams(temperature=0, max_tokens=8)
-TOK = CharTokenizer()
-
-
-class Rig:
-    """An engine around the tiny model, and the dense weights to check it against."""
-
-    def __init__(
-        self,
-        device: torch.device,
-        eos: Collection[int] = (),
-        vision: bool = True,
-        **overrides: int | bool,
-    ) -> None:
-        self.model_config = tiny_config()
-        self.weights = random_weights(self.model_config, seed=3)
-        decoder = build_decoder(self.model_config, self.weights, device)
-        self.vision = TinyVision(self.model_config.hidden_size, device)
-        settings: dict[str, int | bool] = {
-            "max_model_len": 64,
-            "max_num_seqs": 4,
-            "max_num_batched_tokens": 32,
-            "block_size": 4,
-            "num_kv_blocks": 48,
-        }
-        config = EngineConfig("tiny", **{**settings, **overrides})  # type: ignore[arg-type]
-        self.engine = Engine(config, decoder, self.vision if vision else None, TOK, eos)
-
-    def run(self, limit: int = 500) -> dict[str, list[RequestOutput]]:
-        seen: dict[str, list[RequestOutput]] = defaultdict(list)
-        for _ in range(limit):
-            if not self.engine.has_unfinished:
-                return seen
-            for output in self.engine.step():
-                seen[output.request_id].append(output)
-        raise AssertionError("the engine did not finish")
-
-    def text(self, tokens: list[int]) -> str:
-        return TOK.decode(tokens, skip_special_tokens=True)
-
-    def greedy(self, prompt: list[int], steps: int) -> list[int]:
-        return dense_greedy(self.model_config, self.weights, prompt, steps)
-
-
-def joined(outputs: list[RequestOutput]) -> str:
-    return "".join(o.text for o in outputs)
-
-
 PROMPT = [5, 6, 7, 8, 9, 10]
 
 

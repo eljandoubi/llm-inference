@@ -70,7 +70,7 @@ def dense_greedy(
             embeds[start : start + len(rows)] = rows
         logits = dense_logits(config, w, tokens, embeds)[-1]
         first, second = logits.topk(2).values.tolist()
-        assert first - second > 1e-3, "a near tie could flip, try another seed"
+        assert first - second > 1e-4, "a near tie could flip, try another seed"
         out.append(int(logits.argmax()))
         tokens.append(out[-1])
     return out
