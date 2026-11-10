@@ -14,6 +14,18 @@ from tests.tinyhf import (
 from vlmserve.device import accelerators
 
 
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    """Tests marked hub need the network: they run only when asked for (-m hub)."""
+    if config.getoption("-m"):
+        return
+    skip = pytest.mark.skip(reason="needs the Hugging Face hub, run: pytest -m hub")
+    for item in items:
+        if "hub" in item.keywords:
+            item.add_marker(skip)
+
+
 @pytest.fixture(params=accelerators())
 def device(request: pytest.FixtureRequest) -> torch.device:
     """Every device type this machine has, so numerics get checked on each of them."""
