@@ -1,5 +1,11 @@
 """Pick a device and a dtype so the rest of the code never checks for CUDA by hand."""
 
+import os
+import platform
+import shutil
+from dataclasses import dataclass
+
+import psutil
 import torch
 import torch.nn.functional as F
 
@@ -91,3 +97,62 @@ def resolve_dtype(spec: str, device: torch.device) -> torch.dtype:
     if not supports_dtype(device, dtype):
         raise ValueError(f"{spec} does not work on {device}")
     return dtype
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryInfo:
+    free: int
+    total: int
+
+
+def memory_info(device: torch.device) -> MemoryInfo:
+    ram = psutil.virtual_memory()
+    match device.type:
+        case "cuda":
+            free, total = torch.cuda.mem_get_info(device)
+        case "xpu":
+            free, total = torch.xpu.mem_get_info(device)
+        case "mps":
+            # unified memory: what the driver may hand out, capped by what the OS has
+            total = torch.mps.recommended_max_memory()
+            used = torch.mps.driver_allocated_memory()
+            free = min(max(total - used, 0), ram.available)
+        case _:
+            free, total = ram.available, ram.total
+    return MemoryInfo(free=free, total=total)
+
+
+def synchronize(device: torch.device) -> None:
+    match device.type:
+        case "cuda":
+            torch.cuda.synchronize(device)
+        case "xpu":
+            torch.xpu.synchronize(device)
+        case "mps":
+            torch.mps.synchronize()
+
+
+def uses_pinned_staging(device: torch.device) -> bool:
+    """Only CUDA gets anything out of pinned host buffers."""
+    return device.type == "cuda"
+
+
+def describe(device: torch.device) -> str:
+    match device.type:
+        case "cuda":
+            name = torch.cuda.get_device_name(device)
+        case "xpu":
+            name = torch.xpu.get_device_name(device)
+        case "mps":
+            name = "Apple GPU"
+        case _:
+            name = f"{platform.machine()}, {os.cpu_count()} threads"
+    return f"{device} ({name}, {memory_info(device).total / 2**30:.1f} GiB)"
+
+
+def build_hint() -> str | None:
+    """Catch the classic mistake of a CPU-only torch sitting next to an NVIDIA card."""
+    cpu_build = torch.version.cuda is None and torch.version.hip is None
+    if cpu_build and shutil.which("nvidia-smi"):
+        return "nvidia-smi is there but this torch has no CUDA, install a CUDA build"
+    return None

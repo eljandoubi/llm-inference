@@ -1,3 +1,7 @@
+import shutil
+from types import SimpleNamespace
+
+import psutil
 import pytest
 import torch
 
@@ -85,3 +89,65 @@ def test_explicit_dtype_that_does_not_work_is_refused(
 def test_float32_always_passes_the_probe(device: torch.device) -> None:
     assert dev.supports_dtype(device, torch.float32)
     assert dev.resolve_dtype("float32", device) == torch.float32
+
+
+def test_memory_info_is_sane(device: torch.device) -> None:
+    info = dev.memory_info(device)
+    assert 0 < info.free <= info.total
+
+
+def test_cuda_memory_comes_from_the_driver(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(torch.cuda, "mem_get_info", lambda device=None: (3, 8))
+    assert dev.memory_info(torch.device("cuda", 0)) == dev.MemoryInfo(free=3, total=8)
+
+
+def test_mps_free_memory_is_capped_by_what_the_os_has(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gib = 2**30
+    monkeypatch.setattr(torch.mps, "recommended_max_memory", lambda: 10 * gib)
+    monkeypatch.setattr(torch.mps, "driver_allocated_memory", lambda: 4 * gib)
+    ram = SimpleNamespace(available=1 * gib, total=16 * gib)
+    monkeypatch.setattr(psutil, "virtual_memory", lambda: ram)
+    info = dev.memory_info(torch.device("mps"))
+    assert info == dev.MemoryInfo(free=1 * gib, total=10 * gib)
+    ram.available = 8 * gib
+    assert dev.memory_info(torch.device("mps")).free == 6 * gib
+
+
+def test_synchronize_does_not_raise(device: torch.device) -> None:
+    dev.synchronize(device)
+
+
+def test_describe_starts_with_the_device(device: torch.device) -> None:
+    text = dev.describe(device)
+    assert text.startswith(str(device))
+    assert "GiB" in text
+
+
+def test_only_cuda_stages_through_pinned_memory() -> None:
+    assert dev.uses_pinned_staging(torch.device("cuda", 0))
+    assert not dev.uses_pinned_staging(torch.device("cpu"))
+    assert not dev.uses_pinned_staging(torch.device("mps"))
+
+
+@pytest.mark.parametrize(
+    ("cuda", "hip", "nvidia_smi", "warns"),
+    [
+        (None, None, True, True),
+        ("12.8", None, True, False),
+        (None, "6.2", True, False),
+        (None, None, False, False),
+    ],
+)
+def test_build_hint_only_for_cpu_torch_next_to_an_nvidia_card(
+    monkeypatch: pytest.MonkeyPatch,
+    cuda: str | None,
+    hip: str | None,
+    nvidia_smi: bool,
+    warns: bool,
+) -> None:
+    monkeypatch.setattr(torch.version, "cuda", cuda)
+    monkeypatch.setattr(torch.version, "hip", hip)
+    monkeypatch.setattr(shutil, "which", lambda name: "/bin/x" if nvidia_smi else None)
+    assert (dev.build_hint() is not None) is warns
