@@ -2,39 +2,33 @@
 
 [![ci](https://github.com/eljandoubi/llm-inference/actions/workflows/ci.yml/badge.svg)](https://github.com/eljandoubi/llm-inference/actions/workflows/ci.yml)
 
-A small, readable server for vision-language models (VLMs). It does continuous
-batching on a paged KV cache, caches prefixes in a way that knows which image a block
-came from, and speaks the OpenAI chat API. It is plain PyTorch: the same code runs on
-CPU, Apple silicon (MPS), CUDA and Intel XPU, with nothing to compile.
+A small vision-language model server, written to be read. It batches requests
+continuously on a paged KV cache, reuses the cache of prompts it has seen (images
+included) and speaks the OpenAI chat API. It is plain PyTorch, so one code path runs on
+CPU, Apple silicon, CUDA and Intel XPU.
 
-The engine design follows [PagedAttention](https://arxiv.org/abs/2309.06180) and vLLM,
-as laid out in the compact [tinyserve](https://github.com/priyammaz/tinyserve): the
-scheduling loop and the block-hash prefix cache here are written again from those
-ideas, not copied from its code. What is new is the VLM side (images in the block
-hashes, the vision cache, the Hugging Face loaders) and plain PyTorch that runs on
-any device. About 3,700 lines of source, strict typing, 665 tests at 98% coverage.
+The design is the one from [PagedAttention](https://arxiv.org/abs/2309.06180) and vLLM,
+as shown in the small [tinyserve](https://github.com/priyammaz/tinyserve). The
+scheduling loop and the prefix cache are written again from those ideas, not copied from
+its code. What is new here is the vision side (images inside the block hashes, a cache of
+image embeddings, the Hugging Face loaders) and running on any device. About 3,700 lines
+of source, strict typing, 665 tests.
 
-Status: 0.1. It runs end to end on CPU and Apple silicon and matches `transformers`
-token for token on tiny random checkpoints. It has not been run on real weights or on
-a CUDA GPU.
+Status: 0.1. On CPU and Apple silicon it matches `transformers` token for token on tiny
+random LLaVA and text models. It has not been run on real weights or on a CUDA GPU.
 
-- **Continuous batching with chunked prefill.** One token budget per step is shared by
-  decodes and prefill chunks, so a long prompt never stalls the requests that are
-  already generating.
-- **Paged KV cache with prefix caching.** Blocks are hashed along the token chain; a
-  block that overlaps an image also hashes the image content, so the same text with a
-  different picture never reuses the wrong blocks.
-- **Vision embedding cache.** A repeated image skips the vision tower, even when the
-  text around it changed.
-- **Real checkpoints.** Hugging Face LLaVA models (CLIP or SigLIP tower, Llama or Qwen2
-  text model) and plain Llama / Qwen2 text models, from safetensors, old and new file
-  layouts.
-- **Any device.** Device and dtype are picked for you (bf16 on Ampere and newer, fp16
-  on MPS and older GPUs, fp32 on CPU) by trying the ops the engine needs, not by
-  trusting capability flags.
-- **A server you can put in front of people.** Streaming and plain completions, usage
-  with cached token counts, stop strings, request size limits, aborts when a client
-  hangs up, a Prometheus `/metrics` page.
+- Continuous batching with chunked prefill: decodes and prefill chunks share one token
+  budget per step, so a long prompt does not stall the requests already generating.
+- Paged KV cache with prefix caching. A block that holds part of an image also hashes
+  the image, so the same text with another picture never reuses it.
+- An embedding cache: a repeated image skips the vision tower, even when the text around
+  it changed.
+- LLaVA checkpoints (CLIP or SigLIP tower, Llama or Qwen2 text model) and plain Llama or
+  Qwen2 models, from safetensors.
+- Device and dtype are picked for you by trying the ops the engine needs, not by trusting
+  capability flags.
+- Streaming, usage with cached token counts, stop strings, size limits, aborts when the
+  client hangs up, Prometheus metrics.
 
 ## Quick start
 
@@ -46,7 +40,7 @@ uv sync
 uv run vlmserve devices        # what this machine can run on, and in which dtype
 ```
 
-Serve a model, a Hub id or a local folder:
+Serve a model, from the Hub or a local folder:
 
 ```sh
 uv run vlmserve serve --model llava-hf/llava-interleave-qwen-0.5b-hf
@@ -64,7 +58,7 @@ curl -s localhost:8000/v1/chat/completions -H 'content-type: application/json' -
 EOF
 ```
 
-Any OpenAI client works, for example:
+Any OpenAI client works too:
 
 ```python
 from openai import OpenAI
@@ -79,55 +73,52 @@ for part in stream:
     print(part.choices[0].delta.content or "", end="")
 ```
 
-Or answer one prompt in the terminal, without a server:
+To answer one prompt in the terminal, without a server:
 
 ```sh
 uv run vlmserve generate --model <model> --image cat.jpg --prompt "What is in this picture?"
 ```
 
-To try the whole stack without downloading anything, write a random model (the answers
-are noise, the plumbing is the real thing):
+To try everything without downloading a model, write a random one. The answers are
+noise, the plumbing is real:
 
 ```sh
 uv run python -m randomhf /tmp/tiny --preset tiny
 uv run vlmserve generate --model /tmp/tiny --prompt "hello" --max-tokens 16
 ```
 
-## What runs where
+## Models and hardware
 
-| Device | Status | Default dtype |
+| Device | State | Default dtype |
 | --- | --- | --- |
-| CPU | tested on every push (Linux and macOS in CI) | float32 |
-| Apple silicon (MPS) | tested on an M4, and used for the benchmarks below | float16 |
-| CUDA / ROCm | same code path, **not tested by the author** (no GPU was available) | bfloat16 on sm80+, else float16 |
-| Intel XPU | same, not tested | bfloat16 |
+| CPU | runs the whole test suite; CI covers Linux and macOS | float32 |
+| Apple silicon (MPS) | tested on an M4, used for the numbers below | float16 |
+| CUDA, ROCm | same code, never run (no GPU was available) | bfloat16 on sm80+, else float16 |
+| Intel XPU | same, never run | bfloat16 |
 
-`vlmserve devices` also warns about the classic mistake of a CPU-only torch next to an
-NVIDIA card. On Linux the locked torch wheels are the default PyPI builds, which bring
-the CUDA libraries along (a few GB); on a machine without a GPU you can swap in the CPU
-wheel with `uv pip install torch --index-url https://download.pytorch.org/whl/cpu`.
+`vlmserve devices` warns when a CPU-only torch sits next to an NVIDIA card. On Linux the
+locked torch wheels are the PyPI builds with the CUDA libraries (a few GB). On a machine
+without a GPU, install the CPU wheel instead:
+`uv pip install torch --index-url https://download.pytorch.org/whl/cpu`.
 
 | Model family | Example | State |
 | --- | --- | --- |
-| LLaVA, CLIP tower, Llama text | `llava-hf/llava-1.5-7b-hf` | config, tokenizer, processor, prompts and weight names checked against the real files (`pytest -m hub`) |
-| LLaVA, SigLIP tower, Qwen2 text | `llava-hf/llava-interleave-qwen-0.5b-hf` | same, except the weight names (one weight file, no index to read) |
-| Plain Llama / Qwen2 text | any | engine output equals transformers on random weights |
+| LLaVA, CLIP tower, Llama text | `llava-hf/llava-1.5-7b-hf` | config, tokenizer, chat template and weight index checked against the real repo (`pytest -m hub`), weights never run |
+| LLaVA, SigLIP tower, Qwen2 text | `llava-hf/llava-interleave-qwen-0.5b-hf` | same, but one weight file means no index to check |
+| Plain Llama or Qwen2 text | any | matches `transformers` on random weights |
 
-A word on what "checked" means. Downloading weights was not possible where this was
-written (a proxy blocks the weight CDN), so the real models were never run end to end.
-What was verified: the real configs, tokenizers, chat templates and image processors
-produce exactly the prompts and pixel tensors transformers' own processor makes (576
-placeholder tokens for llava-1.5, 729 for llava-interleave), and every tensor name of
-llava-1.5's index lands in the decoder, the tower or the projector. The numerics are
-tested the other way round: tiny randomly initialised llava models of both kinds are
-written to disk, loaded by `vlmserve`, and the greedy tokens are compared with
-`transformers`' `generate()` on CPU and MPS, with several requests in flight, chunked
-prefill, and a repeated image coming out of the cache. If you run a real checkpoint,
-please tell me how it went.
+No real weights were downloaded: the network this was written on blocks the weight CDN.
+What could be checked is that the real tokenizers, templates and image processors give
+exactly the prompts and pixel tensors `transformers` gives (576 image tokens for
+llava-1.5, 729 for llava-interleave), and that every weight name in llava-1.5's index
+finds its place. For the numbers, tiny random models of both kinds are written to disk,
+loaded by vlmserve and decoded greedily next to `transformers`: same tokens, on CPU and
+MPS, with several requests in flight, chunked prefill and cache hits. If you run a real
+checkpoint, an issue with the result is welcome.
 
-Not supported, and refused with a clear error: LLaVA-NeXT tiling, Idefics3/SmolVLM,
-Qwen2-VL (needs M-RoPE), PaliGemma and Gemma 3 (bidirectional attention over images),
-Llama 3.1-style RoPE scaling, sliding-window and MoE text models.
+Refused with an error: LLaVA-NeXT tiling, Idefics3 and SmolVLM, Qwen2-VL (it needs
+M-RoPE), PaliGemma and Gemma 3 (bidirectional attention over images), Llama 3.1 RoPE
+scaling, sliding-window and MoE text models.
 
 ## How it works
 
@@ -152,62 +143,57 @@ flowchart LR
     end
 ```
 
-**Scheduling.** Every step the scheduler fills one token budget (`--max-num-batched-tokens`):
-running requests go first (a decode is one token, a request still in prefill takes a
-chunk), then waiting ones, oldest first. Nobody jumps the queue. When the cache runs out of blocks, the *newest* request
-gives its blocks back and starts over later, so an old request never loses its place to a
-younger one. Image embedding has its own per-step budget, and a chunk is cut short
-before an image that doesn't fit yet.
+**Scheduling.** Each step has one token budget (`--max-num-batched-tokens`). Running
+requests go first: a decode takes one token, a request still reading its prompt takes a
+chunk. Waiting requests come after, oldest first, and nobody jumps the queue. When the
+cache runs out of blocks the newest request hands its blocks back and starts over later,
+so an old request never loses its place to a young one. Embedding images has a budget of
+its own, and a chunk stops short of an image that does not fit yet.
 
-**KV cache.** Memory is a pool of fixed-size blocks (`--block-size`, 16 tokens). A
-request holds a list of block ids and grows it as it goes, there is no reservation for
-the longest possible answer. The cache is sized from the memory left after the weights
-(`--kv-memory-fraction`), but never more than `--max-num-seqs` full-length sequences
-could use.
+**KV cache.** Memory is a pool of fixed-size blocks, 16 tokens by default. A request keeps
+a list of block ids and adds to it as it grows, so nothing is reserved for the longest
+possible answer. The pool is sized from the memory left after the weights, and never
+bigger than `--max-num-seqs` full-length sequences could use.
 
-**Prefix cache.** Each full block gets a digest of its tokens *and of its parent's
-digest*, so a hit means the whole prefix matches. Placeholder tokens look the same for
-every image, so a block that touches an image also hashes the image's content key and
-the slice of it the block covers. Finished requests leave their blocks in the pool,
-reusable until they are evicted; `usage.prompt_tokens_details.cached_tokens` tells the
-client how much of its prompt was a hit.
+**Prefix cache.** Every full block gets a hash of its tokens and of its parent's hash, so
+a hit means the whole prefix is the same. A block that overlaps an image also hashes the
+image's content key and the part of the image it covers, because the placeholder tokens
+are the same for every picture. Finished requests leave their blocks in the pool until
+they are evicted. The response says how much of the prompt was a hit
+(`usage.prompt_tokens_details.cached_tokens`).
 
-**Vision path.** The frontend turns images into placeholder runs in the prompt and
-pixel tensors. The runner embeds the images a step needs (batched through the tower),
-splices the embeddings over the placeholder rows, and keeps them in an LRU cache
-measured in tokens so the same image later skips the tower. A request drops its own
-copy of an embedding as soon as the whole image has been computed.
+**Images.** The frontend turns each image into a run of placeholder tokens plus a pixel
+tensor. The runner embeds the images a step needs in one batch, writes the embeddings over
+the placeholder rows, and keeps them in an LRU cache counted in tokens. A request drops its
+own copy once the whole image has been computed.
 
-**Serving.** One thread owns the engine; the event loop never waits for the model.
-Tokenizing and image decoding run on a small thread pool, so a big JPEG doesn't stall
-other requests either. Each request gets a queue the engine thread fills through
-`call_soon_threadsafe`. If the client disconnects, the request is aborted and its
-blocks are freed (also when the answer isn't streamed). If the engine thread dies, new
+**Serving.** One thread owns the engine, so the event loop never waits for the model.
+Tokenizing and image decoding run on a small thread pool. Each request has a queue that the
+engine thread fills with `call_soon_threadsafe`. When a client disconnects, streamed or
+not, the request is aborted and its blocks come back. If the engine thread dies, new
 requests get a 503 and open streams get an error event.
 
-**Why images are data URLs only.** A server that fetches whatever URL a client names is
-a request-forgery hole, so remote image URLs are refused. Images are also limited in
-count, bytes and pixels, the request body is capped while it streams in, and EXIF
-rotation is applied. JPEGs are decoded at reduced size when the model will shrink them anyway.
+**Images are data URLs only.** A server that fetches any URL a client names can be pointed
+at internal addresses, so remote image URLs are refused. Images are limited in count,
+bytes and pixels, the request body is capped while it streams in, and EXIF rotation is
+applied. A JPEG is decoded at reduced size when the model will shrink it anyway.
 
-## HTTP API
+## Using the server
 
 | Route | |
 | --- | --- |
-| `POST /v1/chat/completions` | text and `image_url` parts (base64 data URLs), `stream`, `stream_options.include_usage`, `max_tokens` / `max_completion_tokens`, `temperature`, `top_p`, `top_k`, `repetition_penalty`, `stop`, `ignore_eos` (a vLLM extension, handy for benchmarks) |
+| `POST /v1/chat/completions` | text and `image_url` parts (base64 data URLs), `stream`, `stream_options.include_usage`, `max_tokens` or `max_completion_tokens`, `temperature`, `top_p`, `top_k`, `repetition_penalty`, `stop`, `ignore_eos` (vLLM's extension, useful for benchmarks) |
 | `GET /v1/models` | the served name and its context window |
 | `GET /health` | 200, or 503 once the engine thread is gone |
-| `GET /metrics` | Prometheus text: running and waiting requests, KV usage, token counters, prefix and encoder cache hits |
+| `GET /metrics` | Prometheus text: running and waiting requests, KV usage, token counters, prefix and embedding cache hits |
 
-Things that would change the answer and that the server cannot do (`tools`, `logprobs`,
-`logit_bias`, `response_format` other than text, `frequency_penalty`, `n > 1`) are a
-400, not silently ignored. Other errors are shaped like OpenAI's: 413 for an oversized
-image or body, 499 when the client left, 503 when the engine is down.
+What the server cannot do and would otherwise get wrong (`tools`, `logprobs`, `logit_bias`,
+`response_format` other than text, `frequency_penalty`, `n > 1`) is a 400, not silently
+ignored. Other errors look like OpenAI's: 413 for an oversized image or body, 499 when the
+client left, 503 when the engine is down.
 
-## Command line
-
-`vlmserve serve`, `vlmserve generate` and `vlmserve devices`; `--help` lists everything.
-The ones you will touch:
+Commands: `vlmserve serve`, `vlmserve generate` and `vlmserve devices`. `--help` lists every
+flag; these are the ones you will touch.
 
 | Flag | Default | |
 | --- | --- | --- |
@@ -216,30 +202,29 @@ The ones you will touch:
 | `--max-model-len` | the model's, at most 4096 | context window |
 | `--max-num-seqs` | 32 | requests running at once |
 | `--max-num-batched-tokens` | 2048 | the per-step token budget |
-| `--num-kv-blocks` / `--kv-memory-fraction` | free memory x 0.8 | KV cache size |
+| `--num-kv-blocks` or `--kv-memory-fraction` | free memory x 0.8 | KV cache size |
 | `--no-prefix-caching` | off | turn the prefix cache off |
-| `--host`, `--port` | `127.0.0.1`, 8000 | the server does not listen on the network unless asked |
-| `--max-images`, `--max-image-bytes`, `--max-image-pixels` | 8, 10 MiB, 40 MP | per request limits |
+| `--host`, `--port` | `127.0.0.1`, 8000 | not reachable from the network unless you ask |
+| `--max-images`, `--max-image-bytes`, `--max-image-pixels` | 8, 10 MiB, 40 MP | per-request limits |
 
-The server has no authentication. Keep it on localhost, or put a reverse proxy that
-checks credentials in front of it before exposing `--host 0.0.0.0`.
+There is no authentication. Keep the server on localhost, or put a reverse proxy that checks
+credentials in front of it before using `--host 0.0.0.0`.
 
-Out of memory? Lower `--max-model-len`, `--max-num-seqs` or `--kv-memory-fraction`.
-Private or gated models: set `HF_TOKEN`; no network: `HF_HUB_OFFLINE=1` with a local
-folder or a populated cache.
+Out of memory: lower `--max-model-len`, `--max-num-seqs` or `--kv-memory-fraction`. Gated
+models need `HF_TOKEN`; without a network, use `HF_HUB_OFFLINE=1` with a local folder or a
+filled cache.
 
 ## Performance
 
-These numbers are about the *serving stack*: batching, the prefix cache and the vision
-cache. The model is a random llava-style checkpoint with real shapes (249M parameters: a
-30-layer Llama and a ViT-B tower, 196 image tokens per image), made by
-`python -m randomhf`, on an Apple M4 (16 GB) with MPS in float16. One run per
-scenario, no other heavy work on the machine. Read them as ratios between
-configurations, not as absolute speed, and not as a statement about any real model. The
-raw outputs are in [`benchmarks/results`](benchmarks/results/apple-m4-mps.txt);
-`benchmarks/suite.sh` reproduces them.
+These numbers are about the serving stack (batching, prefix cache, image cache), not model
+speed. The model is a random llava-style checkpoint with real shapes: 249M parameters, a
+30-layer Llama plus a ViT-B tower, 196 image tokens per image (`python -m randomhf`). Apple
+M4, 16 GB, MPS, float16, one run per scenario, nothing else heavy running. Read the tables
+as ratios between settings. The raw output is in
+[`benchmarks/results`](benchmarks/results/apple-m4-mps.txt) and `benchmarks/suite.sh` runs
+it again.
 
-**Continuous batching.** 64 new tokens per request, prompts of about 575 tokens.
+Continuous batching, 64 new tokens per request, prompts of about 575 tokens:
 
 | Requests in flight | Output tokens/s | Time to first token (p50 / p90) | Gap between tokens (p50) |
 | ---: | ---: | ---: | ---: |
@@ -247,18 +232,18 @@ raw outputs are in [`benchmarks/results`](benchmarks/results/apple-m4-mps.txt);
 | 4 | 63.6 | 670 / 1086 ms | 47.4 ms |
 | 16 | 100.3 | 639 / 2428 ms | 123 ms |
 
-Sixteen requests in flight give 2.7 times the throughput of one. The cost is latency per
-token, as expected on a device that is already close to saturated.
+Sixteen requests in flight give 2.7 times the throughput of one, and each token takes
+longer, as expected when the device is close to saturated.
 
-**Prefix cache.** 32 requests, 4 in flight, prompts of about 940 tokens of which about 860
-are the same system prompt, 32 new tokens.
+Prefix cache, 32 requests with 4 in flight, prompts of about 940 tokens of which about 860
+are one shared system prompt, 32 new tokens:
 
 | Prefix cache | Prompt tokens from cache | Time to first token (p50) | Output tokens/s | End to end (p50) |
 | --- | ---: | ---: | ---: | ---: |
 | on | 91% | 168 ms | 72.5 | 1.73 s |
 | off | 0% | 1036 ms | 39.8 | 3.06 s |
 
-**Images.** One image of 196 tokens plus a short question, 32 requests, 4 in flight.
+Images, one image of 196 tokens plus a short question, 32 requests with 4 in flight:
 
 | Setup | Prompt tokens from cache | Time to first token (p50) | Output tokens/s |
 | --- | ---: | ---: | ---: |
@@ -266,7 +251,7 @@ are the same system prompt, 32 new tokens.
 | images drawn from a pool of 32, both caches on | 36% | 213 ms | 98 |
 | same image, prefix cache off (embedding cache only) | 0% | 368 ms | 96 |
 
-Run your own against any OpenAI-style server:
+To measure any OpenAI-style server:
 
 ```sh
 uv run vlmserve serve --model <model> &
@@ -279,63 +264,59 @@ time to first token, the gap between tokens, throughput and cache hits.
 ## Development
 
 ```sh
-uv sync                                   # locked dependencies, dev group included
-uv run ruff check . && uv run ruff format --check .
-uv run mypy                               # strict
-uv run pytest --cov                       # no GPU, no downloads
-uv run pytest -m hub                      # opt in: checks the real llava repos (network)
+uv sync
+make check                 # ruff, mypy and pytest with coverage: what CI runs
+uv run pytest -m hub       # opt in, needs the network: the real LLaVA repos
 ```
 
-`uv add <package>` (`--dev` for tooling) keeps `uv.lock` current; commit it. CI runs
-lint, mypy and the tests on Linux (Python 3.12 and 3.13) and macOS, and builds the
-package.
+`uv add <package>` (`--dev` for tooling) updates `uv.lock`; commit it. CI runs lint, mypy
+and the tests on Linux (Python 3.12 and 3.13) and macOS, and builds the package.
 
-The tests never touch the network. Numerics are checked against two references: a dense
-(unpaged) implementation in `tests/dense.py`, and `transformers` itself on tiny random
-checkpoints that `randomhf` writes to disk in the real file layouts (several
-variants: classic and nested llava layouts, tied and untied embeddings, CLIP and SigLIP).
-The model tests run on every device the machine has: CPU everywhere, plus MPS on a Mac.
+The tests never use the network. They check numbers against two references: a plain,
+unpaged implementation (`tests/dense.py`) and `transformers` itself, on tiny random
+checkpoints that `randomhf` writes in the real file layouts (classic and nested LLaVA
+layouts, tied and untied embeddings, CLIP and SigLIP). Model tests run on every device the
+machine has: CPU, plus MPS on a Mac.
 
 ```
 src/vlmserve/
   engine.py, scheduler.py, runner.py   the core loop: schedule, run a batch, sample
   kv/                                  block pool, prefix hashing, KV cache manager
   model/                               decoder, paged attention, checkpoint reading
-  multimodal/                          image decoding and limits, encoder cache
-  hf/                                  llava vision tower, chat template frontend, loader
+  multimodal/                          image decoding and limits, embedding cache
+  hf/                                  LLaVA vision tower, chat template frontend, loader
   server/                              FastAPI app, protocol, SSE, limits, metrics
-  async_engine.py                      engine thread behind an asyncio interface
+  async_engine.py                      the engine thread behind an asyncio interface
   device.py, config.py, cli.py         device and dtype choice, settings, commands
-benchmarks/                            load test, random model writer, suite and results
+benchmarks/                            load test, suite script, saved results
+randomhf/                              random checkpoints for tests and benchmarks
 tests/
 ```
 
-To add a model family: write a `VisionEncoder` (embeds `pixel_values` into the text
-model's space), a `Frontend` (chat template, tokenizer, image placeholders) and teach
+To add a model family, write a `VisionEncoder` (embeds `pixel_values` into the text model's
+space) and a `Frontend` (chat template, tokenizer, image placeholders), then teach
 `hf/loader.py` the new `model_type`. The engine only knows those two interfaces.
 
-## Limits and what is next
+## Limits
 
-- One process, one device. No tensor or pipeline parallelism, no speculative decoding,
-  no quantization.
-- The decoder covers Llama-style models with default RoPE. RoPE scaling, sliding
-  windows and MoE are the first things to add for more text models.
-- The attention kernel is PyTorch's SDPA over gathered blocks, not a fused paged kernel.
-  It is correct everywhere and fast enough to show the scheduling wins above, but a
-  fused CUDA/Triton kernel would be the next step for a big GPU.
-- CUDA and XPU paths have not been run by the author.
-- More VLM families (Idefics3/SmolVLM, Qwen2-VL) need their own frontends and, for
-  Qwen2-VL, a different position encoding.
+- One process, one device. No tensor or pipeline parallelism, no speculative decoding, no
+  quantization.
+- The decoder handles Llama-style models with default RoPE. RoPE scaling, sliding windows
+  and MoE are the first things to add for more text models.
+- Attention is PyTorch's SDPA over gathered blocks, not a fused paged kernel. It is correct
+  everywhere and fast enough to show the scheduling wins above; a fused CUDA or Triton
+  kernel is the next step for a big GPU.
+- More VLM families (Idefics3, SmolVLM, Qwen2-VL) need their own frontends, and Qwen2-VL
+  a different position encoding.
 
 ## Credits
 
 [PagedAttention](https://arxiv.org/abs/2309.06180) (Kwon et al.) and the vLLM project for
 the design. [tinyserve](https://github.com/priyammaz/tinyserve) for showing how small a
 readable version can be: the scheduler's step loop (running requests first, evict the
-newest when blocks run out, admit nothing new in a step that evicted) and the shape of
-the prefix cache follow its structure, written again here with different data
-structures. Hugging Face `transformers` for the model definitions this is checked
-against.
+newest when blocks run out, admit nothing new in a step that evicted) and the shape of the
+prefix cache follow its structure, written again here with different data structures.
+Hugging Face `transformers` for the model definitions this is checked against.
 
 ## License
 
