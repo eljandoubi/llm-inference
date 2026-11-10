@@ -6,15 +6,14 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from vlmserve.async_engine import AsyncEngine, EngineDeadError
 from vlmserve.engine import RequestOutput
 from vlmserve.frontend import Frontend
-from vlmserve.multimodal.images import ImageError, ImageLimits, ImageTooLargeError
+from vlmserve.multimodal.images import ImageLimits
 from vlmserve.server.chat import prepare_prompt
-from vlmserve.server.errors import error_response
+from vlmserve.server.errors import error_response, install_error_handlers
 from vlmserve.server.limits import BodyLimitMiddleware
 from vlmserve.server.metrics import CONTENT_TYPE as METRICS_CONTENT_TYPE
 from vlmserve.server.metrics import render as render_metrics
@@ -128,22 +127,7 @@ def create_app(
     app.add_middleware(BodyLimitMiddleware, max_bytes=max_body_bytes)
     app.state.prep = prep
     app.state.limits = limits
-
-    @app.exception_handler(RequestValidationError)
-    async def invalid_request(_: Request, exc: RequestValidationError) -> JSONResponse:
-        first = exc.errors()[0]
-        where = [str(p) for p in first["loc"] if p != "body"]
-        message = f"{'.'.join(where)}: {first['msg']}" if where else first["msg"]
-        return error_response(400, message, param=where[-1] if where else None)
-
-    @app.exception_handler(ImageError)
-    async def bad_image(_: Request, exc: ImageError) -> JSONResponse:
-        status = 413 if isinstance(exc, ImageTooLargeError) else 400
-        return error_response(status, str(exc), param="messages")
-
-    @app.exception_handler(EngineDeadError)
-    async def engine_dead(_: Request, exc: EngineDeadError) -> JSONResponse:
-        return error_response(503, str(exc), kind="server_error")
+    install_error_handlers(app)
 
     @app.get("/health")
     async def health() -> JSONResponse:
