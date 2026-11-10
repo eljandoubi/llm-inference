@@ -1,9 +1,21 @@
 import asyncio
-from collections.abc import Callable, Iterator
+import functools
+from collections.abc import Callable, Coroutine, Iterator
 from contextlib import contextmanager
+from typing import Any
 
 from tests.rig import Rig
 from vlmserve.async_engine import AsyncEngine
+
+
+def async_test[**P](test: Callable[P, Coroutine[Any, Any, None]]) -> Callable[P, None]:
+    """Run an async test function in its own event loop, fixtures and params intact."""
+
+    @functools.wraps(test)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> None:
+        asyncio.run(test(*args, **kwargs))
+
+    return wrapper
 
 
 @contextmanager
