@@ -20,7 +20,7 @@ class Attention(nn.Module):
         self.q_size = config.num_heads * config.head_dim
         self.kv_size = config.num_kv_heads * config.head_dim
         self.scale = config.head_dim**-0.5
-        # q, k and v come out of one matmul
+        # one fused projection, forward() splits it into q, k and v
         self.qkv_proj = nn.Linear(
             config.hidden_size,
             self.q_size + 2 * self.kv_size,

@@ -92,8 +92,8 @@ class Scheduler:
         self.waiting.append(req)
 
     def schedule(self) -> Batch:
-        # one budget for prefill chunks and decode tokens alike, so a long prompt
-        # never holds up the decodes for more than a step's worth of tokens
+        # decodes and prefill chunks spend the same budget, so a long prompt is
+        # worked off a slice per step instead of blocking the decodes
         budget = self.config.max_num_batched_tokens
         encode = _EncodeBudget(
             self.config.max_encoder_tokens_per_step, self.encoder_cache

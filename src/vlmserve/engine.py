@@ -17,7 +17,7 @@ from vlmserve.scheduler import Scheduler
 @dataclass(frozen=True, slots=True)
 class RequestOutput:
     request_id: str
-    text: str  # new text since the previous output of this request
+    text: str  # only what is new since the last output, not the whole answer
     finished: bool
     finish_reason: FinishReason | None
     num_prompt_tokens: int

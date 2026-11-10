@@ -87,7 +87,7 @@ class Sampler:
             keep_k = torch.where(top_k > 0, top_k, torch.full_like(top_k, candidates))
             values = values.masked_fill(rank >= keep_k[:, None], float("-inf"))
             probs = values.softmax(-1)
-            # nucleus: drop a candidate once the ones before it already add up to top_p
+            # nucleus: a candidate stays while the mass ranked above it is under top_p
             before = probs.cumsum(-1) - probs
             drop = (before >= top_p[:, None]) & (top_p < 1)[:, None]
             probs = values.masked_fill(drop, float("-inf")).softmax(-1)

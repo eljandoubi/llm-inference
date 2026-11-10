@@ -16,7 +16,7 @@ class RMSNorm(nn.Module):
 
 
 class Rotary(nn.Module):
-    """cos/sin tables for rotary embeddings, indexed by absolute position."""
+    """Rotary embedding tables: a row of cos and sin for every absolute position."""
 
     cos: torch.Tensor
     sin: torch.Tensor
