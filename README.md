@@ -215,6 +215,9 @@ The ones you will touch:
 | `--host`, `--port` | `127.0.0.1`, 8000 | the server does not listen on the network unless asked |
 | `--max-images`, `--max-image-bytes`, `--max-image-pixels` | 8, 10 MiB, 40 MP | per request limits |
 
+The server has no authentication. Keep it on localhost, or put a reverse proxy that
+checks credentials in front of it before exposing `--host 0.0.0.0`.
+
 Out of memory? Lower `--max-model-len`, `--max-num-seqs` or `--kv-memory-fraction`.
 Private or gated models: set `HF_TOKEN`; no network: `HF_HUB_OFFLINE=1` with a local
 folder or a populated cache.
