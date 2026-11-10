@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from vlmserve.async_engine import AsyncEngine, EngineDeadError
 from vlmserve.engine import RequestOutput
@@ -16,6 +16,8 @@ from vlmserve.multimodal.images import ImageError, ImageLimits, ImageTooLargeErr
 from vlmserve.server.chat import prepare_prompt
 from vlmserve.server.errors import error_response
 from vlmserve.server.limits import BodyLimitMiddleware
+from vlmserve.server.metrics import CONTENT_TYPE as METRICS_CONTENT_TYPE
+from vlmserve.server.metrics import render as render_metrics
 from vlmserve.server.protocol import (
     ChatCompletion,
     ChatCompletionRequest,
@@ -148,6 +150,10 @@ def create_app(
         if engine.healthy:
             return JSONResponse({"status": "ok"})
         return JSONResponse({"status": "unavailable"}, status_code=503)
+
+    @app.get("/metrics")
+    async def metrics() -> Response:
+        return Response(render_metrics(engine), media_type=METRICS_CONTENT_TYPE)
 
     @app.get("/v1/models")
     async def models() -> ModelList:

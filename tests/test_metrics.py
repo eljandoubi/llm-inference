@@ -1,10 +1,19 @@
-import torch
+import time
+from collections.abc import Iterator
+from dataclasses import dataclass
 
+import pytest
+import torch
+from fastapi.testclient import TestClient
+
+from tests.frontend import TinyFrontend
 from tests.models import image_segment
 from tests.rig import Rig
 from vlmserve.async_engine import AsyncEngine
+from vlmserve.multimodal.images import ImageLimits
 from vlmserve.sampling import SamplingParams
-from vlmserve.server.metrics import render
+from vlmserve.server.app import create_app
+from vlmserve.server.metrics import CONTENT_TYPE, render
 
 CPU = torch.device("cpu")
 GREEDY = SamplingParams(temperature=0, max_tokens=6)
@@ -95,3 +104,37 @@ def test_a_request_in_flight_shows_in_the_gauges() -> None:
     assert values["vlmserve_requests_running"] == 1
     assert values["vlmserve_requests_waiting"] == 1
     assert 0 < values["vlmserve_kv_cache_usage_ratio"] <= 1
+
+
+@dataclass
+class Served:
+    client: TestClient
+    engine: AsyncEngine
+
+
+@pytest.fixture
+def served() -> Iterator[Served]:
+    engine = AsyncEngine(Rig(CPU).engine)
+    app = create_app(engine, TinyFrontend(), "tiny-vlm", ImageLimits())
+    with TestClient(app) as client:
+        yield Served(client, engine)
+
+
+def test_the_endpoint_serves_prometheus_text(served: Served) -> None:
+    reply = served.client.get("/metrics")
+    assert reply.status_code == 200
+    assert reply.headers["content-type"] == CONTENT_TYPE
+    assert scrape(reply.text)["vlmserve_engine_healthy"] == 1
+
+
+def test_the_endpoint_follows_the_traffic(served: Served) -> None:
+    body = {"messages": [{"role": "user", "content": "hi"}], "max_tokens": 3}
+    assert served.client.post("/v1/chat/completions", json=body).status_code == 200
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        values = scrape(served.client.get("/metrics").text)
+        if values["vlmserve_requests_finished_total"] == 1:
+            break
+        time.sleep(0.01)
+    assert values["vlmserve_requests_finished_total"] == 1
+    assert values["vlmserve_generation_tokens_total"] == 3
