@@ -14,31 +14,16 @@ from vlmserve.engine import RequestOutput
 from vlmserve.frontend import Frontend
 from vlmserve.multimodal.images import ImageError, ImageLimits, ImageTooLargeError
 from vlmserve.server.chat import prepare_prompt
+from vlmserve.server.errors import error_response
 from vlmserve.server.protocol import (
     ChatCompletion,
     ChatCompletionRequest,
     Choice,
     ChoiceMessage,
-    ErrorBody,
-    ErrorResponse,
     ModelCard,
     ModelList,
 )
 from vlmserve.server.sse import DONE, chunk, sse, usage_chunk, usage_of
-
-
-def error_response(
-    status: int,
-    message: str,
-    *,
-    kind: str = "invalid_request_error",
-    param: str | None = None,
-    code: str | None = None,
-) -> JSONResponse:
-    body = ErrorResponse(
-        error=ErrorBody(message=message, type=kind, param=param, code=code)
-    )
-    return JSONResponse(body.model_dump(), status_code=status)
 
 
 async def drain(
