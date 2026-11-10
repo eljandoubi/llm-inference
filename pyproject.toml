@@ -71,7 +71,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "S105", "S106"]
+"tests/**" = ["S101", "S105", "S106", "S311"]
 "benchmarks/**" = ["T20", "S311"]
 "src/vlmserve/cli.py" = ["T20"]
 
