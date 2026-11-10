@@ -46,6 +46,7 @@ class ChatCompletionRequest(BaseModel):
     top_p: float | None = Field(default=None, gt=0, le=1)
     top_k: int | None = Field(default=None, ge=0)  # not openai, but everybody has it
     repetition_penalty: float | None = Field(default=None, gt=0)  # same here
+    ignore_eos: bool | None = None  # vllm's, benchmarks need fixed-length answers
     stop: str | list[str] | None = None
     stream: bool = False
     stream_options: StreamOptions | None = None
@@ -101,6 +102,7 @@ class ChatCompletionRequest(BaseModel):
             top_k=self.top_k or 0,
             repetition_penalty=self.repetition_penalty or 1.0,
             stop=tuple(stop),
+            ignore_eos=bool(self.ignore_eos),
         )
 
 

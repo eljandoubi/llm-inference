@@ -115,6 +115,7 @@ def test_sampling_defaults() -> None:
     assert params.top_k == 0
     assert params.repetition_penalty == 1.0
     assert params.stop == ()
+    assert params.ignore_eos is False
 
 
 def test_the_prompt_leaves_only_so_much_room() -> None:
@@ -137,3 +138,8 @@ def test_everything_the_client_set_reaches_the_params() -> None:
     assert (params.top_p, params.top_k, params.repetition_penalty) == (0.9, 40, 1.2)
     assert params.stop == ("END",)
     assert parse(stop=["a", "b"]).sampling_params(10).stop == ("a", "b")
+
+
+def test_ignore_eos_is_passed_on() -> None:
+    assert parse(ignore_eos=True).sampling_params(10).ignore_eos is True
+    assert parse(ignore_eos=False).sampling_params(10).ignore_eos is False
