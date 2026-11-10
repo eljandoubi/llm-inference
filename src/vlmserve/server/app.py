@@ -15,6 +15,7 @@ from vlmserve.frontend import Frontend
 from vlmserve.multimodal.images import ImageError, ImageLimits, ImageTooLargeError
 from vlmserve.server.chat import prepare_prompt
 from vlmserve.server.errors import error_response
+from vlmserve.server.limits import BodyLimitMiddleware
 from vlmserve.server.protocol import (
     ChatCompletion,
     ChatCompletionRequest,
@@ -103,8 +104,12 @@ def create_app(
     model_name: str,
     limits: ImageLimits | None = None,
     prep_workers: int = 4,
+    max_body_bytes: int | None = None,
 ) -> FastAPI:
     limits = limits or ImageLimits()
+    if max_body_bytes is None:
+        # every image as base64 (4/3 of its size), plus room for the text
+        max_body_bytes = limits.max_images * limits.max_bytes * 4 // 3 + 2**20
     # tokenizing and decoding images is cpu work: keep it off the event loop
     prep = ThreadPoolExecutor(
         max_workers=prep_workers, thread_name_prefix="vlmserve-prep"
@@ -118,6 +123,7 @@ def create_app(
         prep.shutdown(wait=False, cancel_futures=True)
 
     app = FastAPI(title="vlmserve", lifespan=lifespan)
+    app.add_middleware(BodyLimitMiddleware, max_bytes=max_body_bytes)
     app.state.prep = prep
     app.state.limits = limits
 
