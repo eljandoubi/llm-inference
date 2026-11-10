@@ -1,30 +1,24 @@
 import threading
-from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pytest
 from transformers import AutoConfig, AutoProcessor, AutoTokenizer
 
-from tests.tinyhf import PLAIN_TEMPLATE, TOKENS_PER_IMAGE, TinyLlava, picture
-from vlmserve.frontend import ImagePart, PromptInputs, TextPart, Turn
+from tests.tinyhf import (
+    MULTI,
+    PLAIN_TEMPLATE,
+    SINGLE,
+    TEXT_ONLY,
+    TOKENS_PER_IMAGE,
+    TinyLlava,
+    image,
+    reference,
+)
+from vlmserve.frontend import PromptInputs, TextPart, Turn
 from vlmserve.hf.frontend import HFFrontend, ImageSupport
 from vlmserve.hf.llava import llava_images
 from vlmserve.multimodal.images import ImageError
-
-
-def image(seed: int) -> ImagePart:
-    return ImagePart(picture(seed), f"key-{seed}")
-
-
-SINGLE = [Turn("user", [image(1), TextPart("what is this?")])]
-MULTI = [
-    Turn("system", [TextPart("be brief")]),
-    Turn("user", [TextPart("look: "), image(1), TextPart("and "), image(2)]),
-    Turn("assistant", [TextPart("they differ")]),
-    Turn("user", [image(3), TextPart("and this?")]),
-]
-TEXT_ONLY = [Turn("user", [TextPart("hello there")])]
 
 
 def frontend_of(tiny: TinyLlava) -> HFFrontend:
@@ -37,27 +31,6 @@ def frontend_of(tiny: TinyLlava) -> HFFrontend:
         {tokenizer.eos_token_id},
         llava_images(processor, config),
     )
-
-
-def reference(tiny: TinyLlava, turns: Sequence[Turn]) -> Any:
-    """What transformers' own processor makes of the same conversation."""
-    conversation = [
-        {
-            "role": turn.role,
-            "content": [
-                {"type": "image"}
-                if isinstance(p, ImagePart)
-                else {"type": "text", "text": p.text}
-                for p in turn.parts
-            ],
-        }
-        for turn in turns
-    ]
-    text = tiny.processor.apply_chat_template(
-        conversation, add_generation_prompt=True, tokenize=False
-    )
-    pictures = [p.image for t in turns for p in t.parts if isinstance(p, ImagePart)]
-    return tiny.processor(images=pictures or None, text=text, return_tensors="pt")
 
 
 @pytest.mark.parametrize(

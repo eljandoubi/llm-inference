@@ -6,8 +6,15 @@ from typing import Any
 import pytest
 import torch
 
-from tests.test_hf_frontend import MULTI, SINGLE, TEXT_ONLY, image, reference
-from tests.tinyhf import TinyLlava, TinyText
+from tests.tinyhf import (
+    MULTI,
+    SINGLE,
+    TEXT_ONLY,
+    TinyLlava,
+    TinyText,
+    hf_continuation,
+    image,
+)
 from vlmserve.config import EngineConfig
 from vlmserve.engine import Engine
 from vlmserve.frontend import TextPart, Turn
@@ -56,12 +63,6 @@ def run(engine: Engine) -> None:
 def loaded_llava(tiny: TinyLlava, device: torch.device) -> LoadedModel:
     source = open_model(str(tiny.path))
     return load_model(source, device, torch.float32, max_model_len=128)
-
-
-def hf_continuation(tiny: TinyLlava, turns: list[Turn]) -> list[int]:
-    inputs = reference(tiny, turns)
-    out = tiny.model.generate(**inputs, do_sample=False, max_new_tokens=STEPS)
-    return out[0, inputs["input_ids"].shape[1] :].tolist()
 
 
 def test_a_llava_checkpoint_is_read_the_way_it_is_configured(
