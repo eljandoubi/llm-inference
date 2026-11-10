@@ -35,8 +35,15 @@ class Frontend(Protocol):
     """Everything model specific that happens before the engine: chat template,
     tokenizing, and turning images into placeholder tokens plus vision inputs."""
 
-    tokenizer: Tokenizer
-    eos_token_ids: frozenset[int]
-    draft_size: tuple[int, int] | None  # roughly what images get shrunk to
+    @property
+    def tokenizer(self) -> Tokenizer: ...
+
+    @property
+    def eos_token_ids(self) -> frozenset[int]: ...
+
+    @property
+    def draft_size(self) -> tuple[int, int] | None:
+        """Roughly what images get shrunk to, so jpegs can be decoded smaller."""
+        ...
 
     def build_prompt(self, turns: Sequence[Turn]) -> PromptInputs: ...
