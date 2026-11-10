@@ -41,6 +41,29 @@ TOKENS_PER_IMAGE = (
     IMAGE_SIZE // PATCH
 ) ** 2  # clip drops its CLS token, siglip has none
 
+
+@dataclass(frozen=True, slots=True)
+class Sizes:
+    """How big a random model is. The defaults are tiny, tests run in milliseconds."""
+
+    hidden: int = 32
+    intermediate: int = 64
+    layers: int = 2
+    heads: int = 4
+    kv_heads: int = 2
+    max_positions: int = 128
+    vocab_size: int = 0  # at least this many embedding rows, the tokenizer needs fewer
+    init_range: float = 0.3  # wide logits, so greedy decoding has no near ties
+    vision_hidden: int = 32
+    vision_intermediate: int = 64
+    vision_layers: int = 3
+    vision_heads: int = 4
+    image_size: int = IMAGE_SIZE
+    patch: int = PATCH
+
+
+TINY = Sizes()
+
 PLAIN_TEMPLATE = (
     "{% for m in messages %}{{ m['role'] + ': ' + m['content'] + '\n' }}{% endfor %}"
     "{% if add_generation_prompt %}{{ 'assistant: ' }}{% endif %}"
@@ -126,17 +149,19 @@ def build_tokenizer(variant: Variant) -> PreTrainedTokenizerFast:
     )
 
 
-def text_config(variant: Variant, tokenizer: PreTrainedTokenizerFast) -> Any:
+def text_config(
+    variant: Variant, tokenizer: PreTrainedTokenizerFast, sizes: Sizes = TINY
+) -> Any:
     """The text model of a variant: llama with its own head, qwen2 with a tied one."""
     args = {
-        "vocab_size": len(tokenizer),
-        "hidden_size": 32,
-        "intermediate_size": 64,
-        "num_hidden_layers": 2,
-        "num_attention_heads": 4,
-        "num_key_value_heads": 2,
-        "max_position_embeddings": 128,
-        "initializer_range": 0.3,  # wide logits, so greedy decoding has no near ties
+        "vocab_size": max(len(tokenizer), sizes.vocab_size),
+        "hidden_size": sizes.hidden,
+        "intermediate_size": sizes.intermediate,
+        "num_hidden_layers": sizes.layers,
+        "num_attention_heads": sizes.heads,
+        "num_key_value_heads": sizes.kv_heads,
+        "max_position_embeddings": sizes.max_positions,
+        "initializer_range": sizes.init_range,
         "eos_token_id": tokenizer.eos_token_id,
         "bos_token_id": tokenizer.bos_token_id,
     }
@@ -145,24 +170,32 @@ def text_config(variant: Variant, tokenizer: PreTrainedTokenizerFast) -> Any:
     return Qwen2Config(**args, tie_word_embeddings=True)
 
 
-def build_tiny_llava(path: Path, variant: Variant, seed: int = 0) -> TinyLlava:
+def build_tiny_llava(
+    path: Path,
+    variant: Variant,
+    seed: int = 0,
+    sizes: Sizes = TINY,
+    dtype: torch.dtype = torch.float32,
+) -> TinyLlava:
+    """Write a random llava checkpoint of the given size (small enough, by default,
+    for a unit test) and keep the transformers model that wrote it."""
     torch.manual_seed(seed)
     tokenizer = build_tokenizer(variant)
     clip = variant.vision == "clip"
     vision_args = {
-        "hidden_size": 32,
-        "intermediate_size": 64,
-        "num_hidden_layers": 3,
-        "num_attention_heads": 4,
-        "image_size": IMAGE_SIZE,
-        "patch_size": PATCH,
+        "hidden_size": sizes.vision_hidden,
+        "intermediate_size": sizes.vision_intermediate,
+        "num_hidden_layers": sizes.vision_layers,
+        "num_attention_heads": sizes.vision_heads,
+        "image_size": sizes.image_size,
+        "patch_size": sizes.patch,
     }
     vision = (
         CLIPVisionConfig(projection_dim=16, **vision_args)
         if clip
         else SiglipVisionConfig(vision_use_head=False, **vision_args)
     )
-    text = text_config(variant, tokenizer)
+    text = text_config(variant, tokenizer, sizes)
     config = LlavaConfig(
         vision_config=vision,
         text_config=text,
@@ -170,27 +203,23 @@ def build_tiny_llava(path: Path, variant: Variant, seed: int = 0) -> TinyLlava:
         vision_feature_layer=-2 if clip else -1,
         vision_feature_select_strategy="default" if clip else "full",
     )
-    model = LlavaForConditionalGeneration(config).eval()
+    model = LlavaForConditionalGeneration(config).eval().to(dtype)
     model.generation_config = GenerationConfig(
         eos_token_id=[tokenizer.eos_token_id], pad_token_id=tokenizer.unk_token_id
     )
     model.save_pretrained(path)
 
-    size = (
-        {"shortest_edge": IMAGE_SIZE}
-        if clip
-        else {"height": IMAGE_SIZE, "width": IMAGE_SIZE}
-    )
+    side = sizes.image_size
     if clip:
         images = CLIPImageProcessorPil(
-            size=size, crop_size={"height": IMAGE_SIZE, "width": IMAGE_SIZE}
+            size={"shortest_edge": side}, crop_size={"height": side, "width": side}
         )
     else:
-        images = SiglipImageProcessorPil(size=size)
+        images = SiglipImageProcessorPil(size={"height": side, "width": side})
     processor = LlavaProcessor(
         image_processor=images,
         tokenizer=tokenizer,
-        patch_size=PATCH,
+        patch_size=sizes.patch,
         vision_feature_select_strategy=config.vision_feature_select_strategy,
         num_additional_image_tokens=1 if clip else 0,
         chat_template=LLAMA_TEMPLATE if variant.llama else CHATML_TEMPLATE,
