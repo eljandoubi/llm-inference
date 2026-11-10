@@ -142,3 +142,66 @@ def test_a_request_without_room_waits_for_blocks() -> None:
     assert b.status is Status.WAITING
     sched.finish(a, FinishReason.STOP)
     assert shape(tick(sched)) == [("b", 0, 8, True)]
+
+
+def two_requests_about_to_run_dry() -> tuple[Scheduler, Request, Request]:
+    """Four usable blocks, two requests holding two each, both needing a third."""
+    sched = make(num_blocks=5, max_seqs=4)
+    a, b = Request("a", [1, 2, 3, 4]), Request("b", [5, 6, 7, 8])
+    sched.add(a)
+    sched.add(b)
+    for _ in range(5):
+        tick(sched)
+    assert sched.kv.pool.num_free == 0
+    assert a.num_tokens == b.num_tokens == 9
+    return sched, a, b
+
+
+def test_the_newest_request_is_preempted_when_blocks_run_out() -> None:
+    sched, a, b = two_requests_about_to_run_dry()
+    assert shape(tick(sched)) == [("a", 8, 1, True)]
+    assert b.status is Status.WAITING
+    assert b.num_preemptions == 1
+    assert b.num_computed_tokens == 0
+    assert b.block_ids == []
+    assert a.num_preemptions == 0
+    assert sched.running == [a]
+    assert list(sched.waiting) == [b]
+
+
+def test_a_preempted_request_recomputes_what_it_generated() -> None:
+    sched, a, b = two_requests_about_to_run_dry()
+    tick(sched)
+    sched.finish(a, FinishReason.STOP)
+    # its prompt block survived in the cache, the rest is computed again
+    assert shape(tick(sched)) == [("b", 4, 5, True)]
+    assert b.status is Status.RUNNING
+    assert b.num_cached_tokens == 4
+
+
+def test_a_preempted_request_goes_before_newcomers() -> None:
+    sched, a, _ = two_requests_about_to_run_dry()
+    sched.add(Request("c", [9, 9, 9, 9]))
+    tick(sched)
+    assert [r.request_id for r in sched.waiting] == ["b", "c"]
+    assert sched.running == [a]
+
+
+def test_nobody_new_is_admitted_in_a_step_that_preempted() -> None:
+    sched, _, b = two_requests_about_to_run_dry()
+    sched.add(Request("c", [9, 9, 9, 9]))
+    batch = tick(sched)
+    assert [i.request.request_id for i in batch.items] == ["a"]
+    assert sched.kv.pool.num_free > 0  # c would have fit, it just isn't tried
+    assert b.status is Status.WAITING
+
+
+def test_a_request_that_cannot_fit_even_alone_preempts_itself() -> None:
+    sched = make(num_blocks=3)  # two usable blocks, eight tokens
+    a = Request("a", list(range(8)))
+    sched.add(a)
+    tick(sched)
+    assert tick(sched).items == []  # the ninth token needs a third block
+    assert a.status is Status.WAITING
+    assert a.num_preemptions == 1
+    assert list(sched.waiting) == [a]

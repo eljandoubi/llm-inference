@@ -45,18 +45,32 @@ class Scheduler:
         # never holds up the decodes for more than a step's worth of tokens
         budget = self.config.max_num_batched_tokens
         items: list[ScheduledRequest] = []
+        preempted = False
 
-        for req in self.running:
-            if budget == 0:
-                break
+        i = 0
+        while i < len(self.running) and budget > 0:
+            req = self.running[i]
             n = min(self._remaining(req), budget)
-            if not self.kv.allocate(req, req.num_computed_tokens + n):
-                break  # no room, it waits for somebody to finish
+            while not self.kv.allocate(req, req.num_computed_tokens + n):
+                # out of blocks: the newest request hands its blocks back and starts
+                # over later, so an older one never loses its place to a younger one
+                victim = self.running.pop()
+                self._preempt(victim)
+                preempted = True
+                if victim is req:
+                    break
+            if req.status is not Status.RUNNING:
+                break
             items.append(self._item(req, req.num_computed_tokens, n))
             budget -= n
+            i += 1
 
+        # a step that had to preempt is not the moment to take on new work
         while (
-            self.waiting and budget > 0 and len(self.running) < self.config.max_num_seqs
+            not preempted
+            and self.waiting
+            and budget > 0
+            and len(self.running) < self.config.max_num_seqs
         ):
             req = self.waiting[0]
             hits = self.kv.match_prefix(req)
@@ -95,6 +109,11 @@ class Scheduler:
                 self.finish(req, FinishReason.ABORT)
                 return req
         return None
+
+    def _preempt(self, victim: Request) -> None:
+        self.kv.free(victim)
+        victim.preempt()
+        self.waiting.appendleft(victim)  # it goes before anything that arrived later
 
     @staticmethod
     def _remaining(req: Request) -> int:
