@@ -51,15 +51,19 @@ def _rope(x: torch.Tensor, theta: float) -> torch.Tensor:
 
 
 def dense_logits(
-    config: DecoderConfig, w: dict[str, torch.Tensor], token_ids: list[int]
+    config: DecoderConfig,
+    w: dict[str, torch.Tensor],
+    token_ids: list[int],
+    embeds: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """The slow, obvious forward pass over a whole sequence: no fusing, no cache.
 
+    embeds, if given, replaces the embedding lookup (that is how images get in).
     Returns the logits of every position, [len(token_ids), vocab], in float32.
     """
     heads, kv_heads, dim = config.num_heads, config.num_kv_heads, config.head_dim
     length = len(token_ids)
-    x = w["embed_tokens.weight"][torch.tensor(token_ids)]
+    x = w["embed_tokens.weight"][torch.tensor(token_ids)] if embeds is None else embeds
     causal = torch.ones(length, length, dtype=torch.bool).tril()
     for i in range(config.num_layers):
         p = f"layers.{i}"

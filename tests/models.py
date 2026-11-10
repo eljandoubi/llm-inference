@@ -1,4 +1,5 @@
 import random
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any
 
@@ -8,6 +9,7 @@ from vlmserve.model.attention import SeqPlan, build_metadata
 from vlmserve.model.config import DecoderConfig
 from vlmserve.model.decoder import Attention, Decoder, DecoderLayer
 from vlmserve.model.weights import load_decoder_weights
+from vlmserve.request import ImageSegment
 
 TINY = DecoderConfig(
     vocab_size=50,
@@ -92,3 +94,41 @@ class PagedRun:
             self.cached[name] = self.cached.get(name, 0) + len(new)
             self.tokens.setdefault(name, []).extend(new)
         return out
+
+
+class TinyVision:
+    """A stand-in vision tower: 4x4 patches of a 3x8x8 image through one matrix."""
+
+    tokens_per_image = 4
+
+    def __init__(
+        self,
+        hidden_size: int,
+        device: torch.device,
+        dtype: torch.dtype = torch.float32,
+        seed: int = 0,
+    ) -> None:
+        gen = torch.Generator().manual_seed(seed)
+        matrix = torch.randn(3 * 4 * 4, hidden_size, generator=gen) * 0.5
+        self.matrix = matrix.to(device=device, dtype=dtype)
+        self.calls = 0  # how often the tower ran
+        self.images = 0  # and on how many images
+
+    def encode(
+        self, inputs: Sequence[Mapping[str, torch.Tensor]]
+    ) -> list[torch.Tensor]:
+        self.calls += 1
+        self.images += len(inputs)
+        out = []
+        for item in inputs:
+            pixels = item["pixel_values"].to(self.matrix.device, self.matrix.dtype)
+            patches = pixels.unfold(1, 4, 4).unfold(2, 4, 4)  # [3, 2, 2, 4, 4]
+            out.append(patches.permute(1, 2, 0, 3, 4).reshape(4, 48) @ self.matrix)
+        return out
+
+
+def image_segment(offset: int, key: str, seed: int = 0) -> ImageSegment:
+    pixels = torch.randn(3, 8, 8, generator=torch.Generator().manual_seed(seed))
+    return ImageSegment(
+        offset, TinyVision.tokens_per_image, key, {"pixel_values": pixels}
+    )
