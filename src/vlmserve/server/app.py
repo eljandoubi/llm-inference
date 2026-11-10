@@ -99,6 +99,95 @@ async def server_sent_events(
         await stream.aclose()  # a client that left must not keep the request alive
 
 
+class ChatRoute:
+    """POST /v1/chat/completions: a prompt in, one answer or a stream out."""
+
+    def __init__(
+        self,
+        engine: AsyncEngine,
+        frontend: Frontend,
+        model_name: str,
+        limits: ImageLimits,
+        prep: ThreadPoolExecutor,
+    ) -> None:
+        self.engine = engine
+        self.frontend = frontend
+        self.model_name = model_name
+        self.limits = limits
+        self.prep = prep
+
+    async def handle(
+        self, body: ChatCompletionRequest, http: Request
+    ) -> ChatCompletion | StreamingResponse | JSONResponse:
+        if not self.engine.healthy:
+            raise EngineDeadError("the engine is not running")
+        loop = asyncio.get_running_loop()
+        prompt = await loop.run_in_executor(
+            self.prep, prepare_prompt, body.messages, self.frontend, self.limits
+        )
+        max_len = self.engine.engine.config.max_model_len
+        room = max_len - len(prompt.token_ids)
+        if room < 1:
+            return error_response(
+                400,
+                f"the prompt has {len(prompt.token_ids)} tokens, the context "
+                f"window is {max_len} and the answer needs room too",
+                param="messages",
+                code="context_length_exceeded",
+            )
+        request_id = f"chatcmpl-{uuid.uuid4().hex}"
+        created = int(time.time())
+        stream = self.engine.generate(
+            request_id, prompt.token_ids, body.sampling_params(room), prompt.segments
+        )
+        if body.stream:
+            usage = bool(body.stream_options and body.stream_options.include_usage)
+            return self._stream(stream, request_id, created, usage)
+        return await self._whole(stream, request_id, created, http)
+
+    def _stream(
+        self,
+        stream: AsyncGenerator[RequestOutput, None],
+        request_id: str,
+        created: int,
+        include_usage: bool,
+    ) -> StreamingResponse:
+        events = server_sent_events(
+            stream, request_id, created, self.model_name, include_usage
+        )
+        return StreamingResponse(
+            events,
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    async def _whole(
+        self,
+        stream: AsyncGenerator[RequestOutput, None],
+        request_id: str,
+        created: int,
+        http: Request,
+    ) -> ChatCompletion | JSONResponse:
+        answer = await drain_unless_disconnected(stream, http.is_disconnected)
+        if answer is None:  # nobody is listening any more, the request is aborted
+            return error_response(
+                499, "the client closed the request", code="client_closed_request"
+            )
+        text, last = answer
+        return ChatCompletion(
+            id=request_id,
+            created=created,
+            model=self.model_name,
+            choices=[
+                Choice(
+                    message=ChoiceMessage(content=text),
+                    finish_reason=last.finish_reason,
+                )
+            ],
+            usage=usage_of(last),
+        )
+
+
 def create_app(
     engine: AsyncEngine,
     frontend: Frontend,
@@ -146,60 +235,6 @@ def create_app(
         )
         return ModelList(data=[card])
 
-    @app.post("/v1/chat/completions", response_model=None)
-    async def chat_completions(
-        body: ChatCompletionRequest, http: Request
-    ) -> ChatCompletion | StreamingResponse | JSONResponse:
-        if not engine.healthy:
-            raise EngineDeadError("the engine is not running")
-        loop = asyncio.get_running_loop()
-        prompt = await loop.run_in_executor(
-            prep, prepare_prompt, body.messages, frontend, limits
-        )
-        max_len = engine.engine.config.max_model_len
-        room = max_len - len(prompt.token_ids)
-        if room < 1:
-            return error_response(
-                400,
-                f"the prompt has {len(prompt.token_ids)} tokens, the context "
-                f"window is {max_len} and the answer needs room too",
-                param="messages",
-                code="context_length_exceeded",
-            )
-        request_id = f"chatcmpl-{uuid.uuid4().hex}"
-        created = int(time.time())
-        stream = engine.generate(
-            request_id, prompt.token_ids, body.sampling_params(room), prompt.segments
-        )
-        if body.stream:
-            include_usage = bool(
-                body.stream_options and body.stream_options.include_usage
-            )
-            events = server_sent_events(
-                stream, request_id, created, model_name, include_usage
-            )
-            return StreamingResponse(
-                events,
-                media_type="text/event-stream",
-                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-            )
-        answer = await drain_unless_disconnected(stream, http.is_disconnected)
-        if answer is None:  # nobody is listening any more, the request is aborted
-            return error_response(
-                499, "the client closed the request", code="client_closed_request"
-            )
-        text, last = answer
-        return ChatCompletion(
-            id=request_id,
-            created=created,
-            model=model_name,
-            choices=[
-                Choice(
-                    message=ChoiceMessage(content=text),
-                    finish_reason=last.finish_reason,
-                )
-            ],
-            usage=usage_of(last),
-        )
-
+    chat = ChatRoute(engine, frontend, model_name, limits, prep)
+    app.post("/v1/chat/completions", response_model=None)(chat.handle)
     return app
