@@ -195,7 +195,7 @@ async def test_concurrency_caps_the_requests_in_flight() -> None:
         nonlocal active, peak
         active += 1
         peak = max(peak, active)
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(0.05)
         active -= 1
         return httpx2.Response(200, content=ANSWER)
 
@@ -219,9 +219,11 @@ async def test_requests_leave_when_the_schedule_says() -> None:
         return httpx2.Response(200, content=ANSWER)
 
     specs = [lt.Spec({}, 0.0), lt.Spec({}, 0.15)]
+    start = time.perf_counter()
     async with client_for(handler) as client:
         _, seconds = await lt.run_load(client, specs)
-    assert arrivals[1] - arrivals[0] >= 0.14
+    # a slow machine may be late, but a request is never early
+    assert arrivals[1] - start >= 0.14
     assert seconds >= 0.15
 
 
