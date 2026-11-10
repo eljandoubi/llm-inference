@@ -69,6 +69,24 @@ class _EncodeBudget:
         )
 
 
+@dataclass(slots=True)
+class _Plan:
+    """What one step has decided so far: tokens left, the batch, the images to embed."""
+
+    budget: int
+    encode: _EncodeBudget
+    items: list[ScheduledRequest] = field(default_factory=list)
+    preempted: bool = False
+
+    def take(
+        self, req: Request, start: int, n: int, images: list[ImageSegment]
+    ) -> None:
+        self.encode.queue(images)
+        done = ScheduledRequest(req, start, n, samples=start + n >= req.num_tokens)
+        self.items.append(done)
+        self.budget -= n
+
+
 class Scheduler:
     """Continuous batching: every step packs decodes and prefill chunks together."""
 
@@ -94,48 +112,59 @@ class Scheduler:
     def schedule(self) -> Batch:
         # decodes and prefill chunks spend the same budget, so a long prompt is
         # worked off a slice per step instead of blocking the decodes
-        budget = self.config.max_num_batched_tokens
-        encode = _EncodeBudget(
-            self.config.max_encoder_tokens_per_step, self.encoder_cache
+        plan = _Plan(
+            self.config.max_num_batched_tokens,
+            _EncodeBudget(self.config.max_encoder_tokens_per_step, self.encoder_cache),
         )
-        items: list[ScheduledRequest] = []
-        preempted = False
+        self._continue_running(plan)
+        self._admit_waiting(plan)
+        return Batch(plan.items, list(plan.encode.queued.values()))
 
+    def _continue_running(self, plan: _Plan) -> None:
+        """Requests that already hold blocks go first, oldest first."""
         i = 0
-        while i < len(self.running) and budget > 0:
+        while i < len(self.running) and plan.budget > 0:
             req = self.running[i]
-            n = min(self._remaining(req), budget)
-            n, wanted = encode.fit(req, req.num_computed_tokens, n)
+            start = req.num_computed_tokens
+            wanted = min(self._remaining(req), plan.budget)
+            n, images = plan.encode.fit(req, start, wanted)
             if n == 0:
                 i += 1  # its next image has to wait for a step with room to embed it
                 continue
-            while not self.kv.allocate(req, req.num_computed_tokens + n):
-                # out of blocks: the newest request hands its blocks back and starts
-                # over later, so an older one never loses its place to a younger one
-                victim = self.running.pop()
-                self._preempt(victim)
-                preempted = True
-                if victim is req:
-                    break
-            if req.status is not Status.RUNNING:
+            if not self._make_room(req, start + n, plan):
                 break
-            encode.queue(wanted)
-            items.append(self._item(req, req.num_computed_tokens, n))
-            budget -= n
+            plan.take(req, start, n, images)
             i += 1
 
+    def _make_room(self, req: Request, num_tokens: int, plan: _Plan) -> bool:
+        """Allocate for req, preempting from the newest end of the running list.
+
+        False means req was its own victim and went back to waiting.
+        """
+        while not self.kv.allocate(req, num_tokens):
+            # the newest request hands its blocks back and starts over later, so an
+            # older one never loses its place to a younger one
+            victim = self.running.pop()
+            self._preempt(victim)
+            plan.preempted = True
+            if victim is req:
+                return False
+        return True
+
+    def _admit_waiting(self, plan: _Plan) -> None:
+        """Newcomers last, in arrival order, while there is budget, a slot and room."""
         # a step that had to preempt is not the moment to take on new work
         while (
-            not preempted
+            not plan.preempted
             and self.waiting
-            and budget > 0
+            and plan.budget > 0
             and len(self.running) < self.config.max_num_seqs
         ):
             req = self.waiting[0]
             hits = self.kv.match_prefix(req)
             start = len(hits) * self.config.block_size
-            n = min(req.num_tokens - start, budget)
-            n, wanted = encode.fit(req, start, n)
+            wanted = min(req.num_tokens - start, plan.budget)
+            n, images = plan.encode.fit(req, start, wanted)
             if n == 0 or not self.kv.allocate(req, start + n, hits):
                 break  # first come, first served: nobody jumps the queue
             self.waiting.popleft()
@@ -143,11 +172,7 @@ class Scheduler:
             req.num_computed_tokens = start
             req.num_cached_tokens = max(req.num_cached_tokens, start)
             self.running.append(req)
-            encode.queue(wanted)
-            items.append(self._item(req, start, n))
-            budget -= n
-
-        return Batch(items, list(encode.queued.values()))
+            plan.take(req, start, n, images)
 
     def advance(self, batch: Batch) -> None:
         """Book the forward pass: the chunks now have their KV in the cache."""
@@ -191,7 +216,3 @@ class Scheduler:
         if remaining <= 0:
             raise RuntimeError(f"request {req.request_id} has nothing left to compute")
         return remaining
-
-    @staticmethod
-    def _item(req: Request, start: int, n: int) -> ScheduledRequest:
-        return ScheduledRequest(req, start, n, samples=start + n >= req.num_tokens)
