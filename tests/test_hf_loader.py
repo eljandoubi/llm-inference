@@ -16,8 +16,10 @@ from tests.tinyhf import (
     image,
 )
 from vlmserve.config import EngineConfig
+from vlmserve.device import resolve_dtype
 from vlmserve.engine import Engine
 from vlmserve.frontend import TextPart, Turn
+from vlmserve.hf.llava import LlavaVision
 from vlmserve.hf.loader import LoadedModel, eos_token_ids, load_model, open_model
 from vlmserve.request import Request
 from vlmserve.sampling import SamplingParams
@@ -115,6 +117,23 @@ def test_half_precision_loads_and_runs(tiny_llava: TinyLlava) -> None:
     assert loaded.decoder.dtype == torch.bfloat16
     engine = engine_of(loaded)
     req = start(engine, loaded, "a", SINGLE)
+    run(engine)
+    assert len(req.output_token_ids) == STEPS
+
+
+def test_every_device_runs_in_the_dtype_it_picks_for_itself(
+    tiny_llava: TinyLlava, device: torch.device
+) -> None:
+    dtype = resolve_dtype("auto", device)
+    loaded = load_model(
+        open_model(str(tiny_llava.path)), device, dtype, max_model_len=128
+    )
+    assert loaded.decoder.dtype == dtype
+    vision = loaded.vision
+    assert isinstance(vision, LlavaVision)
+    assert next(vision.tower.parameters()).dtype == dtype
+    engine = engine_of(loaded)
+    req = start(engine, loaded, "a", MULTI)
     run(engine)
     assert len(req.output_token_ids) == STEPS
 
