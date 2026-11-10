@@ -1,0 +1,103 @@
+machine:  Apple M4, 16 GiB unified memory, macOS 26.7.1
+device:   mps, float16 (what `--device auto --dtype auto` picks here)
+torch:    2.15.0, transformers 5.22.2, python 3.12.13
+model:    random llava-style checkpoint, 249M parameters (python -m benchmarks.random_model --preset small):
+          30-layer llama (hidden 576, 9 heads, 3 kv heads), ViT-B tower at 224 px = 196 image tokens
+server:   vlmserve serve --max-num-seqs 16 (second server with --no-prefix-caching)
+date:     2026-11-10, one run per scenario, no other heavy work was running
+
+### concurrency 1 (port 8200)
+requests            12 ok, 0 failed
+duration            20.44 s
+request throughput  0.59 req/s
+output throughput   37.6 tokens/s (768 tokens)
+prompt tokens       6908 (1136 from the prefix cache, 16%)
+time to first token p50 142.1  p90 148.5  p99 185.6  mean 141.7  (ms)
+gap between tokens  p50 24.7  p90 33.7  p99 43.2  mean 24.8  (ms)
+end to end          p50 1686.9  p90 1973.0  p99 1977.5  mean 1703.1  (ms)
+encoder_cache_hits_total            0
+image_tokens_encoded_total          0
+
+### concurrency 4 (port 8200)
+requests            32 ok, 0 failed
+duration            32.18 s
+request throughput  0.99 req/s
+output throughput   63.6 tokens/s (2048 tokens)
+prompt tokens       18441 (6800 from the prefix cache, 37%)
+time to first token p50 670.0  p90 1085.7  p99 1286.9  mean 686.8  (ms)
+gap between tokens  p50 47.4  p90 61.4  p99 155.6  mean 52.9  (ms)
+end to end          p50 3803.1  p90 4835.9  p99 4842.6  mean 4020.6  (ms)
+encoder_cache_hits_total            0
+image_tokens_encoded_total          0
+
+### concurrency 16 (port 8200)
+requests            64 ok, 0 failed
+duration            40.85 s
+request throughput  1.57 req/s
+output throughput   100.3 tokens/s (4096 tokens)
+prompt tokens       36929 (18208 from the prefix cache, 49%)
+time to first token p50 639.2  p90 2428.2  p99 3410.6  mean 1175.8  (ms)
+gap between tokens  p50 123.0  p90 159.7  p99 736.2  mean 142.6  (ms)
+end to end          p50 9516.6  p90 12105.2  p99 13221.5  mean 10159.9  (ms)
+encoder_cache_hits_total            0
+image_tokens_encoded_total          0
+
+### shared 120-word system prompt, prefix caching ON (port 8200)
+requests            32 ok, 0 failed
+duration            14.13 s
+request throughput  2.26 req/s
+output throughput   72.5 tokens/s (1024 tokens)
+prompt tokens       30103 (27440 from the prefix cache, 91%)
+time to first token p50 168.4  p90 251.7  p99 290.8  mean 160.5  (ms)
+gap between tokens  p50 49.0  p90 59.3  p99 106.4  mean 51.7  (ms)
+end to end          p50 1734.8  p90 2082.4  p99 2129.4  mean 1763.2  (ms)
+encoder_cache_hits_total            0
+image_tokens_encoded_total          0
+
+### shared 120-word system prompt, prefix caching OFF (port 8201)
+requests            32 ok, 0 failed
+duration            25.75 s
+request throughput  1.24 req/s
+output throughput   39.8 tokens/s (1024 tokens)
+prompt tokens       30103 (0 from the prefix cache, 0%)
+time to first token p50 1035.7  p90 1269.0  p99 2178.0  mean 1024.6  (ms)
+gap between tokens  p50 51.6  p90 65.5  p99 531.0  mean 70.6  (ms)
+end to end          p50 3064.9  p90 3979.0  p99 4567.2  mean 3214.1  (ms)
+encoder_cache_hits_total            0
+image_tokens_encoded_total          0
+
+### 1 image, same image every time, caches ON (port 8200)
+requests            32 ok, 0 failed
+duration            9.21 s
+request throughput  3.48 req/s
+output throughput   111.2 tokens/s (1024 tokens)
+prompt tokens       9080 (6432 from the prefix cache, 71%)
+time to first token p50 134.2  p90 189.4  p99 251.2  mean 136.6  (ms)
+gap between tokens  p50 29.8  p90 40.6  p99 85.1  mean 32.6  (ms)
+end to end          p50 1114.9  p90 1322.4  p99 1328.8  mean 1149.2  (ms)
+encoder_cache_hits_total            22
+image_tokens_encoded_total          0
+
+### 1 image, a different image every time, caches ON (port 8200)
+requests            32 ok, 0 failed
+duration            10.48 s
+request throughput  3.05 req/s
+output throughput   97.7 tokens/s (1024 tokens)
+prompt tokens       9080 (3312 from the prefix cache, 36%)
+time to first token p50 213.1  p90 517.8  p99 595.4  mean 271.5  (ms)
+gap between tokens  p50 30.5  p90 36.0  p99 147.6  mean 33.4  (ms)
+end to end          p50 1293.1  p90 1565.3  p99 1578.4  mean 1307.3  (ms)
+encoder_cache_hits_total            13
+image_tokens_encoded_total          3136
+
+### 1 image, same image every time, prefix cache OFF (port 8201)
+requests            32 ok, 0 failed
+duration            10.69 s
+request throughput  2.99 req/s
+output throughput   95.8 tokens/s (1024 tokens)
+prompt tokens       9080 (0 from the prefix cache, 0%)
+time to first token p50 368.2  p90 397.0  p99 530.1  mean 326.6  (ms)
+gap between tokens  p50 30.0  p90 35.0  p99 62.5  mean 32.5  (ms)
+end to end          p50 1308.7  p90 1512.6  p99 1532.3  mean 1335.0  (ms)
+encoder_cache_hits_total            32
+image_tokens_encoded_total          0
