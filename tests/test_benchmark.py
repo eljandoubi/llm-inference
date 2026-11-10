@@ -256,7 +256,7 @@ def test_the_summary_adds_up() -> None:
     assert summary.ttft_ms["p50"] == pytest.approx(200)
     assert summary.ttft_ms["mean"] == pytest.approx(200)
     assert summary.gap_ms["p50"] == pytest.approx(20)
-    assert summary.errors == ["HTTP 500: boom"]
+    assert summary.errors == ["1x HTTP 500: boom"]
 
 
 def test_the_report_names_what_it_measured() -> None:
@@ -266,7 +266,20 @@ def test_the_report_names_what_it_measured() -> None:
     assert "150 from the prefix cache, 50%" in text
     for name in ("time to first token", "gap between tokens", "end to end"):
         assert name in text
-    assert "error: HTTP 500: boom" in text
+    assert "error: 1x HTTP 500: boom" in text
+
+
+def test_failures_are_counted_by_kind_not_listed_one_by_one() -> None:
+    results = [
+        lt.Result(ok=False, error=f"HTTP 400: the prompt has {n} tokens")
+        for n in range(120, 130)
+    ]
+    results.append(lt.Result(ok=False, error="ConnectError: refused"))
+    summary = lt.summarize(results, seconds=1.0)
+    assert summary.errors == [
+        "10x HTTP 400: the prompt has # tokens",
+        "1x ConnectError: refused",
+    ]
 
 
 def test_an_empty_run_does_not_divide_by_zero() -> None:

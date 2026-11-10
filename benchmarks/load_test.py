@@ -14,8 +14,10 @@ import base64
 import io
 import json
 import random
+import re
 import sys
 import time
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -223,6 +225,15 @@ def _spread(values: Sequence[float]) -> dict[str, float]:
     }
 
 
+def _count_errors(results: Sequence[Result]) -> list[str]:
+    """One line per kind of failure with how often it happened. Numbers don't count
+    (except an HTTP status), or "has 570 tokens" and "has 571 tokens" are two kinds."""
+    counts = Counter(
+        re.sub(r"(?<!\d)(?<!HTTP )\d+", "#", r.error)[:100] for r in results if not r.ok
+    )
+    return [f"{n}x {message}" for message, n in counts.most_common()]
+
+
 def summarize(results: Sequence[Result], seconds: float) -> Summary:
     good = [r for r in results if r.ok]
     tokens = sum(r.completion_tokens for r in good)
@@ -238,7 +249,7 @@ def summarize(results: Sequence[Result], seconds: float) -> Summary:
         ttft_ms=_spread([r.ttft for r in good]),
         gap_ms=_spread([g for r in good for g in r.gaps]),
         latency_ms=_spread([r.latency for r in good]),
-        errors=sorted({r.error for r in results if not r.ok}),
+        errors=_count_errors(results),
     )
 
 
